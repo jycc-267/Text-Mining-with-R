@@ -1,0 +1,4 @@
+"0","library(tidyverse)"
+"0","library(tidytext) # install.packages(""tidytext"")"
+"0","library(jiebaR) # install.packages(""jiebaR"")"
+"0","library(stopwords) # install.packages(""stopwords"")"

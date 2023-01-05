@@ -1,0 +1,25 @@
+"0","new_trump_df <- trump_df %>% 
+    mutate(
+      # 消除演說中有提到 Trump 自己名字的字
+      # str_replace 與 str_replace_all 的差別在哪？
+      text = str_replace_all(string = text, 
+                             pattern = ""Donald|Trump"", replacement = """"), 
+      # 把所有的字改為小寫
+      text = str_to_lower(text), 
+      # 增加一個計算「字元數」的欄位
+      chr_length = str_length(text), 
+      # 增加一個計算「字數」的欄位
+      word_count = str_count(string = text, 
+                       pattern = ""\\w+""), 
+      # 增加一個計算演說中有沒有提到「Clinton」或「Hillary」的欄位
+      clinton = str_detect(string = text, 
+                           pattern = ""[Cc]linton|[Hh]illary""), 
+      # 增加一個計算演說中鼓掌次數
+      applause = str_count(string = text, 
+                           pattern = ""applause"")) 
+"
+"2","錯誤: Problem with `mutate()` column `text`.
+[34mi[39m `text = str_replace_all(string = text, pattern = ""Donald|Trump"", replacement = """")`.
+[31mx[39m argument `str` should be a character vector (or an object coercible to)
+[90mRun `rlang::last_error()` to see where the error occurred.[39m
+"

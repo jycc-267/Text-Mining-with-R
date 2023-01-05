@@ -1,0 +1,7 @@
+"0","udn_final <- udn_token_clean %>%"
+"0","    drop_na(date) %>%"
+"0","    mutate(year = str_extract_all(string = date,"
+"0","                                  pattern = ""\\d{4}"")) %>%"
+"0","    select(id, year, words) %>%"
+"0","    group_by(year) %>%"
+"0","    count(words)"

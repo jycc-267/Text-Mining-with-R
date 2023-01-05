@@ -1,0 +1,3 @@
+"0","stopword <- tibble(word = stopwords())"
+"0","dk_token_clean <- dk_token %>%"
+"0","    anti_join(stopword, by = ""word"")"

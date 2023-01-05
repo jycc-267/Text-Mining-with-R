@@ -1,0 +1,79 @@
+---
+title: "R Data Visualization Challenges"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Load the [heart dataset](http://search.r-project.org/library/kmed/html/heart.html)
+
+Use the heart dataset for the following challenges. Import it and save it in a variable named `heart`. Make sure to review the data dictionary linked above!
+
+```{r import}
+## YOUR CODE HERE
+heart <- read.csv("data/heart.csv", encoding = "UTF-8")
+```
+
+**For each challenge, use ggplot2**
+
+# Challenge 1 
+
+Using the heart dataset, create a histogram of the Serum cholesterol. Save it in a variable named `A`.
+
+```{r challenge_1}
+## YOUR CODE HERE
+A <- ggplot(heart, aes(x = chol)) +
+  geom_histogram()
+```
+
+# Challenge 2 
+
+Using the heart dataset, create a boxplot of Serum cholesterol based on patient self-described sex. Save this figure in a variable named `B`. 
+
+Hint: The variable that identifies patient sex needs to be coerced into a different variable type in order to make this visualization.
+
+```{r challenge_2}
+## YOUR CODE HERE
+heart <- heart %>%
+  transform(sex = as.factor(sex))
+B <- ggplot(heart, aes(x = sex, y = chol)) +
+  geom_boxplot()
+
+# 不動到 dataframe 並設定 factor 階層
+B <- ggplot(heart) +
+  geom_boxplot(aes(x = factor(sex, 
+                              levels = c("0", "1"), 
+                              labels = c("male", "female")), 
+                   y = chol)) +
+  labs(x = "")
+B
+```
+
+# Challenge 3
+
+Using the heart dataset, create a scatterplot that visualizes the relationship between patient age and Serum cholesterol. Save it in a variable named `C`
+
+```{r challenge_3}
+## YOUR CODE HERE
+C <- ggplot(heart, aes(X.U.FEFF.age, chol, color = factor(sex))) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm") +
+  labs(x = "age")
+C
+```
+
+# Challenge 4
+
+Create a line plot of the mean cholesterol for each age, separated by sex using the heart data. You will need to do some data manipulation with `dplyr` to make this plot. Save your plot to a variable named `D`.
+
+```{r challenge_4}
+## YOUR CODE HERE
+```
+
+# Challenge 5 
+
+Use cowplot to create a compound figure named `compound_figure` that contains subplots `A`, `B`, `C`, and `D` that you created above. 
+
+```{r challenge_5}
+## YOUR CODE HERE
+```

@@ -1,0 +1,4 @@
+"0","hottopic_taiwan %>%"
+"0","    head() %>% "
+"0","    # knitr::kable()是為了轉換成html用的，一般不需要用。"
+"0","    knitr::kable()"

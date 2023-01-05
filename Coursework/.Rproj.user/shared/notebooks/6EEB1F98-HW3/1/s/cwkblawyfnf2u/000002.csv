@@ -1,0 +1,5 @@
+"0","trans <- converter(S2TWP)"
+"0","zh_stopwords$stopword <- run_convert(trans, zh_stopwords$stopword)"
+"0","udn_token$words <- run_convert(trans, udn_token$words)"
+"0","udn_token_clean <- udn_token %>%"
+"0","    anti_join(zh_stopwords, by = c(""words"" = ""stopword""))"

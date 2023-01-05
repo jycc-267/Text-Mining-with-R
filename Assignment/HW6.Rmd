@@ -1,0 +1,47 @@
+---
+title: "HW6"
+author: "Your_Name"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 主題模型
+
+請使用`news_df.rds`這個檔案，分析聯合報與自由時報有關公務員頭版頭條的主題，請找出你認為最適合的主題數，並將每個主題取10個最高機率的用詞，以ggplot2畫出來。請依檢核點要求完成。
+
+```{r package, message=FALSE}
+
+```
+
+1. 資料清理：斷詞、移除翻譯報導（trans欄位）、移除停用字（請將數字也移除）、轉換成dtm
+
+```{r data_cleaning_dtm}
+
+```
+
+2. 找出可能最適合的主題數（seed設定為5691）
+建議：第一次先以10為單位，找10-50個主題，判斷哪個區間可能有最適主題數，然後再尋找一次該區間的最適主題數。
+
+```{r find_k, message=FALSE}
+
+```
+
+3. 建立主題模型（LDA）
+提醒：依照你認為最適的主題數來建立模型
+
+```{r topic_modeling}
+
+```
+
+4. 畫出主題模型的結果
+
+```{r plot_result}
+
+```
+
+想一想，各個主題可能在討論什麼？（提醒：斷詞的品質影響文字探勘的品質，請務必在期末報告的時候多花心力在斷詞品質上。）
+

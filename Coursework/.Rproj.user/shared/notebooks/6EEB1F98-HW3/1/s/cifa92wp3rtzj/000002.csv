@@ -1,0 +1,62 @@
+"0","# 使用load讀Rdata檔，會在讀取的同時，自動創建原始檔案的object，所以不用重新assign"
+"0","load(""data/comb.corpus.Rdata"") "
+"0","glimpse(corpus)"
+"2","strsplit(code, ""\n"", fixed = TRUE) 中的警告："
+"2"," 輸入的字串 3 不適用於此語區環境
+"
+"2","strsplit(code, ""\n"", fixed = TRUE) 中的警告："
+"2"," 輸入的字串 6 不適用於此語區環境
+"
+"2","錯誤發生在 if (substring(line, pos, pos + (nchar(indent) - 1)) == indent) {：
+  需要 TRUE/FALSE 值的地方有缺值
+"
+"2","strsplit(code, ""\n"", fixed = TRUE) 中的警告："
+"2"," 輸入的字串 4 不適用於此語區環境
+"
+"2","strsplit(code, ""\n"", fixed = TRUE) 中的警告："
+"2"," 輸入的字串 7 不適用於此語區環境
+"
+"2","strsplit(code, ""\n"", fixed = TRUE) 中的警告："
+"2"," 輸入的字串 10 不適用於此語區環境
+"
+"2","strsplit(code, ""\n"", fixed = TRUE) 中的警告："
+"2"," 輸入的字串 14 不適用於此語區環境
+"
+"2","strsplit(code, ""\n"", fixed = TRUE) 中的警告："
+"2"," 輸入的字串 21 不適用於此語區環境
+"
+"2","錯誤發生在 if (substring(line, pos, pos + (nchar(indent) - 1)) == indent) {：
+  需要 TRUE/FALSE 值的地方有缺值
+"
+"2","strsplit(code, ""\n"", fixed = TRUE) 中的警告："
+"2"," 輸入的字串 3 不適用於此語區環境
+"
+"2","錯誤發生在 if (substring(line, pos, pos + (nchar(indent) - 1)) == indent) {：
+  需要 TRUE/FALSE 值的地方有缺值
+"
+"1","Rows: 17,693"
+"1",""
+"1","
+"
+"1","Columns: 14"
+"1",""
+"1","
+"
+"1","$ date        [3m[38;5;246m<chr>[39m[23m ""18-12-2015"", ""16-12-2015"", ""15-12-2015"", ""15-12-2015"", ""14-12-2015"", ""14-12-2~
+$ speaker     [3m[38;5;246m<chr>[39m[23m ""Avramopoulos"", ""Juncker"", ""Avramopoulos"", ""Juncker"", ""Georgieva"", ""Cañete"", ""~
+$ party       [3m[38;5;246m<chr>[39m[23m ""ND"", ""CSV"", ""ND"", ""CSV"", ""GERB"", ""PP"", ""Con"", ""Con"", ""SMC"", ""Unity"", NA, ""Con~
+$ manifcode   [3m[38;5;246m<dbl>[39m[23m 34511, 23520, 34511, 23520, NA, 33610, 51620, 51620, NA, 87062, NA, 51620, 223~
+$ country     [3m[38;5;246m<chr>[39m[23m ""GR"", ""LU"", ""GR"", ""LU"", ""BG"", ""ES"", ""UK"", ""UK"", ""SI"", ""LV"", NA, ""UK"", ""NL"", ""B~
+$ institution [3m[38;5;246m<chr>[39m[23m ""European Commissioner"", ""European Commissioner"", ""European Commissioner"", ""Eu~
+$ transl      [3m[38;5;246m<lgl>[39m[23m FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, F~
+$ title       [3m[38;5;246m<chr>[39m[23m ""Speaking points by Commissioner Avramopoulos on the adoption of final Visa Li~
+$ text        [3m[38;5;246m<chr>[39m[23m "" Brussels, Ladies and gentlemen, Today we have adopted three final visa liber~
+$ eucount     [3m[38;5;246m<int>[39m[23m 9, 2, 4, 4, 6, 3, 2, 3, 15, 2, 9, 9, 5, 8, 6, 29, 1, 3, 3, 2, 5, 11, 9, 0, 15,~
+$ eupres      [3m[38;5;246m<lgl>[39m[23m TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, ~
+$ eusentence  [3m[38;5;246m<chr>[39m[23m ""Based on our assessment, and the results of continuous monitoring and reporti~
+$ eusentences [3m[38;5;246m<chr>[39m[23m ""The progress report highlights the significant headway made by Georgia to mee~
+$ eutermwin   [3m[38;5;246m<chr>[39m[23m ""headway made by Georgia to meet the criteria for visa liberalisation. Based o~"
+"1",""
+"1","
+"
+"0","corpus <- as_tibble(corpus)"

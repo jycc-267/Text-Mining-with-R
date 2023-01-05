@@ -1,0 +1,346 @@
+---
+title: "Sentiment analysis"
+author: "Mao Wang"
+date: "2021/12/14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r package, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(textdata) # install.packages("textdata")
+library(sentimentr) # install.packages("sentimentr")
+library(jiebaR)
+```
+
+## 1. 帶有情緒的文字
+
+不同於詞袋模型將每個字都視為等量齊觀，**情緒分析是將不同的字詞另外標註情緒或是分數的屬性（attribute）**。透過這些標註資料，情緒分析（sentiment analysis）可以幫助我們判斷這些言論是屬於比較正向或是負面的傾向，具體可以應用在社群網絡留言、政策回饋意見，提供不同於傳統民意調查的資訊。
+
+既然是使用標註的方式，除了使用人工標註的方式來處理外，也已經有不少語言學家著手建立情緒辭典供其他研究者使用。但因為分析不同領域的言論與文字，可能有很多需要脈絡來判斷的用語，會展現出截然不同的情緒表徵。以公共行政領域為例，如果在文獻中看到「官僚」（bureaucracy）一詞，大多是表示中性的官僚體系，但如果是一般民眾的用語，「官僚」通常會是會牽引出僵化、緩慢的負面情緒。所以在使用情緒分析時，請千萬要注意「語境的脈絡」（context），不然可能會產生很偏頗的分析結果。
+
+## 2. 英文情緒辭典
+
+以下將先介紹常用的英文情緒辭典，主要是以`textdata`提供的四種情緒辭典為主。
+
+```{r en_sent_dict}
+afinn_dict <- textdata::lexicon_afinn()
+bing_dict <- textdata::lexicon_bing()
+nrc_dict  <- textdata::lexicon_nrc()
+loughran_dict <- textdata::lexicon_loughran()
+```
+
+每個情緒辭典涵括的詞數與內容皆有所差異，主要的差別是情緒是以分數或是類別的方式呈現，以及建立語料的來源基礎。我們實際來看看各情緒辭典的內容。
+
+```{r en_sent_summary}
+# 正面與負面情緒：分數（score）
+head(afinn_dict)
+summary(afinn_dict) 
+
+# 正面與負面情緒：類別
+head(bing_dict)
+summary(bing_dict)
+unique(bing_dict$sentiment)
+
+# 8種情感（emotion）與2種情緒（sentiment）：類別
+head(nrc_dict)
+summary(nrc_dict)
+unique(nrc_dict$sentiment)
+
+# 財務、法律領域：類別
+head(loughran_dict)
+summary(loughran_dict)
+unique(loughran_dict$sentiment)
+```
+
+以下分別是各情緒辭典的來源，有興趣的同學可以點進去瞭解各情緒辭典的詳細說明。
+- [afinn](https://darenr.github.io/afinn/)
+- [bing](https://www.cs.uic.edu/~liub/FBS/sentiment-analysis.html)
+- [nrc](http://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm)
+- [loughran](https://sraf.nd.edu/textual-analysis/resources/)
+
+接下來將用川普的言論來分析情緒。資料來源是從 [Trump Twitter Archive](https://www.thetrumparchive.com/)擷取，時段為2019年1月1日至5月12日止，並且不包括川普轉推的文章。
+
+```{r trump_twitter}
+trump_twitter <- readr::read_csv("data/trump_twitter_archive.csv") %>% 
+  # 將沒有用到的欄位去掉：來源、推文id, 轉推與否
+  select(-c(source, id_str, is_retweet)) %>% 
+  # 將created_at從文字資料轉為datetime資料
+  mutate(created_at = lubridate::mdy_hms(created_at), 
+         favorite_count = as.numeric(favorite_count)) %>% 
+  # 重新命名 created_at 欄位
+  rename(date = created_at) %>% 
+  # 把不符合日期時間的資料用下一筆資料補上
+  tidyr::fill(date, .direction = "up") %>% 
+  # 把datetime資料轉換成date資料
+  mutate(date = as.Date(date))
+```
+
+在分析前，請先想想你要分析的目的，並以適當的分析單位整理你的資料。如是要以每日或每月為分析基準，在整理資料時，就要先換成適合的date單位。另外是考慮要選用的情緒辭典，我們先以`afinn`為例進行分析。
+
+```{r trump_plot_afinn, warning=FALSE}
+trump_plot_afinn <- trump_twitter %>% 
+  # 因為有些編碼問題，先確認全部轉為 UTF-8
+  # string convert: encoding = UTF-8
+  mutate(text = str_conv(text, encoding = "UTF-8")) %>% 
+  # 斷詞
+  tidytext::unnest_tokens(input = text, output = word) %>% 
+  # 加入情緒分數，因為使用inner_join，所以沒有在情緒辭典的字都會直接刪除
+  inner_join(afinn_dict, by = "word") %>% 
+  # 以日期分群
+  group_by(date) %>% 
+  # 計算每日的情緒分數
+  summarize(day_score_avg = mean(value), 
+         # 製作一個新欄位，呈現當天是正面或負面情緒
+         is_pos = if_else(day_score_avg > 0, TRUE, FALSE)) %>% 
+  ungroup()
+
+# 將剛整理好的資料畫圖看看
+ggplot(trump_plot_afinn, aes(x = date, y = day_score_avg)) + 
+  geom_col(aes(fill = is_pos), show.legend = FALSE) +
+  geom_smooth() +
+  theme_light() + 
+  labs(x = "Month", y = "Sentiment Scores", 
+       title = "Trump Twitter Sentiment Scores", 
+       subtitle = "(2018/12/31-2019/05/11)") +
+  # 畫一條垂直線
+  geom_vline(xintercept = as.Date("2019-05-06"), 
+             linetype = "dashed", color = "tomato", size = 1) +
+  # 註記要標示的文字及相關設定
+  ggplot2::annotate(geom = "text", 
+           # x, y 的定位點
+           x = as.Date("2019-05-04"), 
+           y = 3, 
+           label = "Trump's tariff tweet", 
+           # 靠右對齊
+           hjust = 1)
+
+# 另一種呈現方式
+(p1 <- ggplot(trump_plot_afinn, aes(x = date, y = day_score_avg)) +
+  geom_smooth() + # se = FALSE 可以設定不要灰底的信賴區間（預設0.95）
+  theme_bw() +
+  # 畫一條垂直線
+  geom_vline(xintercept = as.Date("2019-05-06"), 
+             linetype = "dashed", color = "tomato", size = 1) +
+  # 註記要標示的文字及相關設定
+  ggplot2::annotate(geom = "text", 
+           # x, y 的定位點
+           x = as.Date("2019-05-04"), 
+           y = 1, 
+           label = "Trump's tariff tweet", 
+           # 靠右對齊
+           hjust = 1) +
+  labs(x = "Month", y = "Sentiment Scores", title = "Trump Twitter Sentiment Scores", subtitle = "Made by: tidytext (2018/12/31-2019/05/11)"))
+```
+
+有了各種情緒標記，可以依照你的研究問題，使用不同的情緒辭典做出各種不同的分析，但**關鍵的還是想出一個有趣的研究問題，並用適合的文字資料與方法來回應你提出來的問題**，切勿本末倒置。
+
+我們來試試看另一種計算的方式，將每日的正面情緒與負面情緒分數都算出來，然後分別畫出來。
+
+```{r warning=FALSE}
+trump_afinn_pos_neg <- trump_twitter %>% 
+  # 因為有些編碼問題，先確認全部轉為 UTF-8
+  mutate(text = str_conv(text, encoding = "UTF-8")) %>% 
+  # 斷詞
+  tidytext::unnest_tokens(input = text, output = word) %>% 
+  # 加入情緒分數，因為使用inner_join，所以沒有在情緒辭典的字都會直接刪除
+  inner_join(afinn_dict, by = "word") %>% 
+  # 製作一個新的欄位，標示出是正面與負面情緒
+  mutate(pos_neg = if_else(value > 0, true = "positive", 
+                           false = "negative")) %>% 
+  # 依照日期與正負面情緒分群
+  group_by(date, pos_neg) %>% 
+  # 計算各日的正負面情緒分群的平均數
+  summarize(day_score_avg = mean(value)) %>% 
+  ungroup()
+
+# 將剛整理好的資料畫圖看看
+ggplot(trump_afinn_pos_neg, aes(x = date, y = abs(day_score_avg))) + # 要將day_score_avg轉換為絕對值，會比較好比較。
+  geom_line(aes(color = pos_neg)) +
+  geom_smooth(method = "lm", aes(color = pos_neg)) +
+  theme_light() + 
+  theme(legend.title = element_blank()) + 
+  labs(x = "Month", y = "Sentiment Scores", 
+       title = "Trump Twitter Sentiment Scores", 
+       subtitle = "(2018/12/31-2019/05/11)") +
+  # 畫一條垂直線
+  geom_vline(xintercept = as.Date("2019-05-06"), 
+             linetype = "dashed", color = "black", size = 1) +
+  # 註記要標示的文字及相關設定
+  ggplot2::annotate(geom = "text", 
+           # x, y 的定位點
+           x = as.Date("2019-05-04"), 
+           y = 3, 
+           label = "Trump's tariff tweet", 
+           # 靠右對齊
+           hjust = 1)
+```
+
+
+## 練習
+
+使用`trump_twitter`資料，並運用`nrc_dict`情緒辭典分析這段時間川普推特的情緒發展。
+
+1. 將情緒辭典資料併入
+2. 篩選兩個較為對立的情緒
+3. 計算每日發生各種情緒的字數
+4. 將依照labs的資訊，填入正確的x, y 
+5. 依照不同的情緒，畫成不同顏色的線段
+
+```{r plot_practice, eval=FALSE}
+trump_twitter %>% 
+  # 斷詞
+  tidytext::unnest_tokens(input = text, output = word) %>% 
+  # 加入情緒類別，因為使用xxxxx_join，所以沒有在情緒辭典的字都會直接刪除
+  inner_join(nrc_dict, by = "word") %>% 
+  # 篩選其中兩種比較對立的情緒來呈現
+  filter(sentiment %in% c("positive", "negative")) %>% 
+  # 計算每日發生該種情緒的字數
+  count(date, sentiment) %>% 
+  # 開始畫圖，請依照後面的資訊，填入正確的x, y
+  ggplot(aes(x = date, y = n)) +
+  # 將不同情緒以不同顏色區分
+  geom_line(aes(color = sentiment), size = 1) + 
+  # 再畫一條趨勢線
+  geom_smooth(se = FALSE) +
+  theme_minimal() + 
+  scale_color_brewer(type = "qual") +
+  labs(x = "Month", y = "sentiment count", title = "Trump's mood via twitter", subtitle = "(2019)") # + 
+  # facet_wrap(~ sentiment, nrow = 1)
+```
+
+除了`textdata`提供的情緒辭典外，也有很多可以進行情緒分析的套件。以下再介紹一個可以處理句子（sentence）與脈絡的情緒分析套件`sentimentr`。
+
+```{r sentimentr_example}
+(mytext <- tibble(text = c(
+  "do you like it?  But I hate really bad dogs",
+  "I am the best friend.",
+  "Do you really like it?  I\'m not a fan"))
+)
+
+# the example of the output
+get_sentences(mytext) %>% 
+  sentiment()
+
+get_sentences(mytext) %>% 
+  # 依不同文件group_by，會多計算標準差
+  sentiment_by(by = "element_id")
+```
+
+在瞭解了基本的操作邏輯後，讓我們實際用在trump_twitter看看結果會有什麼不同。
+
+```{r sentimentr, warning=FALSE}
+# 單純以句子為斷詞，並計算每句情緒分數
+trump_twitter %>% 
+  # 因為有些編碼問題，先確認全部轉為 UTF-8
+  mutate(text = str_conv(text, encoding = "UTF-8")) %>% 
+  # 以每句為斷詞單位
+  sentimentr::get_sentences() %>% 
+  # 以每句為單位計算情緒分數
+  sentimentr::sentiment()
+
+# 以句子為斷詞，然後以每日分群，計算出平均情緒分數與標準差
+(p2 <- trump_twitter %>% 
+  # 因為有些編碼問題，先確認全部轉為 UTF-8
+  mutate(text = str_conv(text, encoding = "UTF-8")) %>% 
+  # 以每句為斷詞單位
+  sentimentr::get_sentences() %>% 
+  # 以每日分群，再以每句為單位計算情緒分數，再求平均數與標準差
+  sentimentr::sentiment_by(by = "date") %>% 
+  ggplot(aes(x = date, y = ave_sentiment)) + 
+  geom_smooth() +
+  theme_bw() +
+  # 畫一條垂直線
+  geom_vline(xintercept = as.Date("2019-05-06"), 
+             linetype = "dashed", color = "tomato", size = 1) +
+  # 註記要標示的文字及相關設定
+  ggplot2::annotate(geom = "text", 
+           # x, y 的定位點
+           x = as.Date("2019-05-04"), 
+           y = 0.15, 
+           label = "Trump's tariff tweet", 
+           # 靠右對齊
+           hjust = 1) +
+  labs(x = "Month", y = "Sentiment Scores", title = "Trump Twitter Sentiment Scores", subtitle = "Made by: sentimentr (2018/12/31-2019/05/11)"))
+
+# 在分別以每字為基礎的tidytext與每句為基礎的sentimentr計算出每日不同的情緒分數，現在把兩張圖拼在一起看看結果有何差異。
+library(patchwork)
+p1 + p2
+```
+
+實際上來看，其實整體趨勢的落差不大！但要注意兩圖y軸的情緒分數scale差距不小。
+
+## 3. 中文情緒辭典
+
+中文的情緒分析操作起來跟英文的其實做法一樣，同樣是斷詞後將情緒辭典標註併入原本的語料中。這裡使用的是中研院所研發的中文情緒辭典，有興趣的同學可以參考這個網址： [Natural Language and Knowledge Processing Lab, Institute of Information Science, Academia Sinica](http://academiasinicanlplab.github.io/)
+
+```{r zh_dict, message=FALSE}
+# 正面情緒辭典
+pos_dict <- readr::read_delim(file = "data/NTUSD_positive_unicode.txt",
+                              delim = "\n", col_names = FALSE) %>% 
+  mutate(sentiment = "positive") %>% 
+  rename(word = X1)
+
+# 負面情緒辭典
+neg_dict <- readr::read_delim(file = "data/NTUSD_negative_unicode.txt",
+                              delim = "\n", col_names = FALSE) %>% 
+  mutate(sentiment = "negative") %>% 
+  rename(word = X1)
+
+# 將兩者併在一起
+zh_dict <- pos_dict %>% 
+  bind_rows(neg_dict)
+
+zh_dict %>% 
+  group_by(sentiment) %>% 
+  summarize(n = n())
+```
+
+我們使用先前用過的審計部新聞公告，來看看其情緒趨勢。（就作業四的分析結果，可以先猜看看可能會是什麼樣的趨勢）
+
+```{r nao}
+# 讀取RData檔
+load("data/nao.RData") # 讀入的資料為data_all
+
+# 建立斷詞引擎
+seg_engine <- worker(bylines = TRUE)
+
+nao_data <- data_all %>% 
+  mutate(token = segment(fulltext, jiebar = seg_engine)) %>% 
+  unnest(token) %>% 
+  mutate(date = lubridate::ymd(date)) %>% 
+  select(date, token) %>% 
+  inner_join(zh_dict, by = c("token" = "word")) %>% 
+  count(date, sentiment)
+
+ggplot(nao_data, aes(x = date, y = n)) + 
+  geom_line(aes(color = sentiment), size = 0.75) +
+  geom_smooth(color = "tomato2", method = "lm", se = FALSE) +
+  # scale_xxx_yyy 的 xxx 變數通常都是geom()裡面的aes()
+  scale_color_brewer(type = "qual", palette = 6) + 
+  theme_light() +
+  labs(x = "Date", y = "count", title = "NAO News Post", subtitle = "Sentiment Analysis", color = "Sentiment") +
+  # scale_y_sqrt() + 
+  # 手動調整legend的位置到圖內
+  theme(legend.position = c(0.1, 0.7))
+```
+
+
+# 其他資料
+[LIWC](https://cliwc.weebly.com/) 
+[Moral Foundation Dictionary 2.0](https://osf.io/ezn37/)
+[增廣中文意見詞詞典（AUTUSD）](https://docs.google.com/forms/d/e/1FAIpQLSe2Bx1CYqLajfthIL8Q_32HXHqWrxkJMc6f9AnsVuxTD4BdGg/viewform?c=0&w=1)：AUTUSD為經過情感標記蒐集的字詞情感統計數據所匯聚而成的情感辭典，共有26,021個詞彙。每個字都提供了情緒分數和正面標記、中立標記、負面標記、非意見詞標記及非詞標記的數量。
+
+# 讀入外部辭典的其他方式
+
+以下是示範使用`quanteda`的方式讀入辭典資料，但因為使用`quanteda`後續分析的做法與`tidytext`的方式截然不同，這裡就不多做介紹，但很建議有興趣的同學試試。
+
+```{r}
+library(quanteda)
+mfd2 <- quanteda::dictionary(file = "data/mfd2.dic")
+```
+

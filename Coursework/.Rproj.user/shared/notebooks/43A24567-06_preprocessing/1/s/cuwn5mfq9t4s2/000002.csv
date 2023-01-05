@@ -1,0 +1,4 @@
+"0","hottopic_taiwan <- hottopic::get_topics(country = ""Taiwan"") %>% "
+"0","        # select也可以當成是重新排列column的功能，"
+"0","        # everything()則是全選的意思"
+"0","        select(title, news_item_title, everything())"

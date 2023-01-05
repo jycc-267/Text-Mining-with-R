@@ -1,0 +1,6 @@
+"0","docs_vec <- c(""今天天氣很不好"", ""This another one."")"
+"0",""
+"0","docs_df <- data.frame("
+"0","    # 必須以doc_id 與 text 為data frame 的首兩欄"
+"0","    doc_id = seq(from = 1, to = length(docs_vec)), "
+"0","    text = c(""今天天氣很不好"", ""This another one.""))"

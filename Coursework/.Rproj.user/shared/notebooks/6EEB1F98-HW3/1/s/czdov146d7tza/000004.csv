@@ -1,0 +1,7 @@
+"0","udn_corpus <- udn_text %>%"
+"0","    mutate(date = str_extract_all(string = text,"
+"0","                                  pattern = ""\\d{4}-\\d{2}-\\d{2}""),"
+"0","           text = str_replace_all(string = text,"
+"0","                                  pattern = ""\\d+ |\\d{4}-\\d{2}-\\d{2} "","
+"0","                                  replacement = """")) %>%"
+"0","    select(id, date, text)"

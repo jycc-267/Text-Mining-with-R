@@ -1,0 +1,7 @@
+"0","df_politics <- gutenbergr::gutenberg_download("
+"0","        # 以第二本書為例，書名為 Open Source Democracy: How online communication is changing offline politics"
+"0","        gutenberg_id = id_selected[2]"
+"0","        # , "
+"0","        # 設定meta_fields的話，會讓其對應的欄位也存入下載的dataframe"
+"0","        # meta_fields = ""title"""
+"0","        )"

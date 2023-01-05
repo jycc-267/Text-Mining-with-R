@@ -1,0 +1,7 @@
+"0","id_selected <- gutenbergr::gutenberg_metadata %>% "
+"0","        filter(has_text == TRUE) %>% "
+"0","        filter(str_detect(string = title, "
+"0","                          pattern = ""politics"")) %>% "
+"0","        # 只將title欄位抽取出，並轉換回vector的格式"
+"0","        # 如果用select(title)，則仍會維持data frame的格式"
+"0","        pull(gutenberg_id) # 2810, 10753, 22746, 42208"

@@ -1,0 +1,350 @@
+---
+title: "Bag of Words"
+author: "Mao Wang"
+date: "2021/12/7"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. 什麼是詞袋（Bag of words）模型？
+
+```{r package, message=FALSE}
+library(tidyverse)
+library(jiebaR)
+library(tidytext)
+library(tm)
+
+# 不是使用Mac的不用執行這部分（字體）
+# my_theme <- theme_bw() + 
+  # theme(text = element_text(family = "STHeitiTC-Light"))
+# theme_set(my_theme)
+```
+
+詞袋模型就是當斷詞完成後，**不考慮用詞的先後順序**，計算每個詞出現的次數（或是詞頻），並將其轉換成矩陣的方式儲存，一般最常見的是文件-詞彙矩陣（Document-Term Matrix, DTM），將不同的文件放在每一列（row），而每一個特有的詞彙則是儲存在不同欄位（column）。讓我們先來看看中文資料的處理。
+
+```{r zh_bow}
+# 先建立一個 data frame
+zh_example <- tibble(id = 1:4, 
+                  text = c("好的數學老師", 
+                           "數學好的老師", 
+                           "好老師的數學", 
+                           "數學老師的好"))
+# 這是一般大家最常有的資料格式，接著我們要將這樣的格式，轉換成在文字分析中使用的DTM格式。
+
+# 建立斷詞引擎
+seg_engine <- jiebaR::worker(bylines = TRUE) # bylines = TRUE代表直接以list的方式儲存，後面就可以不需要用map處理，直接就是list column。
+
+# 因為jiebaR預設值斷出來的詞，四句還是會有點不同，所以可以將「數學」與「老師」強制一定要斷開。
+jiebaR::new_user_word(worker = seg_engine, words = c("數學", "老師"))
+
+# 進行斷詞，並轉換成dtm
+zh_example_dtm <- zh_example %>% 
+  mutate(token = jiebaR::segment(text, jiebar = seg_engine)) %>% 
+  unnest(token) %>% 
+  count(id, token) %>% 
+  # 轉換成dtm的格式
+  tidytext::cast_dtm(document = id, term = token, value = n)
+  # tidytext::cast_dfm(document = id, term = token, value = n) # quanteda
+  # 其實cast_dtm底層就是做了tidyr::pivot_wider，只是另外將其轉換成tm::DocumentTermMatrix。
+  # pivot_wider(names_from = token, values_from = n, values_fill = 0)
+
+# 檢視dtm物件
+zh_example_dtm
+
+# 實際檢視 dtm 之矩陣
+tm::inspect(zh_example_dtm)
+as.matrix(zh_example_dtm)
+```
+
+可以看到「好的數學老師」與「數學老師的好」這兩句看似意思不同的話，在以詞袋模型分析時，因為每一個詞彙（可以想像成一個變項）顯示的次數都一樣，**其實代表的是兩句話意思完全相同**。接著我們再來以英文的資料試試。
+
+```{r eng_bow}
+# 先建立一個 data frame
+eng_example <- tibble(id = 1:3, 
+                      text = c("I am feeling very happy today.", 
+                               "I am not well today.", 
+                               "I wish I could go to play!"))
+
+# 進行斷詞，並轉換成dtm
+eng_example_dtm <- eng_example %>% 
+  tidytext::unnest_tokens(input = text, output = token, 
+  # 下面的token參數如果是要每個字斷詞，因為是預設，可以不用寫。
+                          token = "words") %>% 
+  count(id, token) %>% 
+  # 轉換成dtm的格式
+  tidytext::cast_dtm(document = id, term = token, value = n)
+  # tidytext::cast_dfm(document = id, term = token, value = n) # quanteda 
+  
+# 檢視dtm物件
+eng_example_dtm
+
+# 實際檢視 dtm 之矩陣
+tm::inspect(eng_example_dtm)
+as.matrix(eng_example_dtm)
+```
+
+中文跟英文資料其實處理上差距不大，主要差別是在斷詞的部分。當然實際在轉換為DTM之前，還需要先完成移除停用詞等資料前處理的步驟，因為這裡只是告訴同學們如何轉換，其他資料前處理的步驟還請參考之前上課的內容。當然也許你會好奇為什麼要整理成 DTM 的格式？**主要原因是因為很多文字模型涉及矩陣運算，DTM或是TDM的底層就是矩陣的格式**，所以才可以用`as.matrix`轉換。
+
+## 2. 基本形式：文件-詞彙矩陣（Document-Term Matrix, DTM）或是詞彙-文件矩陣（Term-Document Matrix, TDM）
+
+我們接著使用作業三的真實資料，是有關公務人員頭版新聞的內容，資料取自聯合報。已經經過基本的資料清理，然後轉換成 DTM 的格式。
+
+```{r dtm}
+# rds也是 R 獨有的一種資料格式，與RData不同的是，RData一次可以儲存多個物件，但rds只能儲存一個物件（讀取速度較快），而且讀取出來的檔案需要重新assign。
+udn_token <- readr::read_rds("data/udn_token_clean.rds") %>% 
+  mutate(year = str_extract(date, pattern = "^\\d{4}")) %>% 
+  # 將year為NA的資料去掉
+  filter(!is.na(year)) %>% 
+  # 把一些僅有數字的資料刪除
+  filter(!str_detect(word, pattern = "\\d")) %>% 
+  select(year, word)
+
+udn_dtm <- udn_token %>% 
+  count(year, word) %>% 
+  tidytext::cast_dtm(document = year, term = word, value = n)
+
+tm::inspect(udn_dtm)
+tm::inspect(udn_dtm[, 133:150])
+```
+
+DTM 因為是矩陣的格式，所以可以讓我們快速的運用矩陣的特性來進行運算。最常做的是，尋找**常同時出現的字**以及兩週後的**主題模型（topic modeling）**。
+
+```{r}
+tm::findAssocs(eng_example_dtm, terms = "today", corlimit = 0.2)
+# inspect(eng_example_dtm)
+tm::findAssocs(udn_dtm, terms = "公務員", corlimit = 0.8)
+
+```
+
+bonus:如果你想更瞭解`tm::findAssocs`背後怎麼運算的，請從計算相關係數的方式去思考。
+
+```{r}
+# tm::findAssocs其實就是算兩個變項的相關係數
+cor(as.matrix(eng_example_dtm)[, "today", drop = FALSE], # drop = FALSE 可以讓格式不要跑掉 
+    as.matrix(eng_example_dtm)[, "very", drop = FALSE])
+
+cor(as.matrix(udn_dtm)[, "公務員", drop = FALSE], 
+    as.matrix(udn_dtm)[, "記者", drop = FALSE])
+```
+
+## 3. 變形：詞頻-反文件頻率（TF-IDF）
+
+但是以次數（word count）與詞頻（term frequency），有時候並不是一個好的特徵代表數值。**比如說一些常用詞，但又不屬於停用詞的範疇，抑或是如果你使用關鍵詞搜尋而來語料，可想而知一定是搜尋用的關鍵詞會高居詞頻前幾名，但這樣的資訊對於我們後續的分析，反而能夠提供的新資訊而少**。這時候，我們可以透過**加權**的方式，將一些很常出現在不同文件的詞彙，降低其權重。目前較多人使用的是叫「詞頻-反文件頻率」（term frequency–inverse document frequency, TF-IDF）的加權方式。
+
+我們先前做的每日出現比重最高的詞彙，其實就是詞頻的概念，計算某個詞彙在該文件中的比重。
+
+$$tf(term) = n_{~tokens~}/ n_{~tokens~in~that~document~}$$
+但詞頻高不代表就是最重要的詞彙，相反的，也許次高詞頻的詞彙更能協助我們理解文件的內容。我們以公務員頭版新聞的報導為例，如果每篇新聞都有提到「公務員」，且公務員的詞頻也很高，但卻無助於我們想瞭解每篇報導的焦點。這時候透過反文件頻率（IDF）加權，就能**突顯各報導的特殊性**。
+
+$$idf(term) = ln(n_{~documents~}/n_{~documents~containing~term})$$
+如果有100份報導，其中只有一篇報導提到「工會」，idf值會是`r log(100/1)`，如果是100篇中有99篇提到，idf值則會是`r log(100/99)`，兩者數值的差距就很大了。
+
+```{r tf_idf}
+# 計算TF-IDF
+
+# 以 data frame 的方式儲存TF-IDF
+tfidf_df <- eng_example %>% 
+  tidytext::unnest_tokens(input = text, output = token) %>% 
+  count(id, token) %>% 
+  tidytext::bind_tf_idf(term = token, document = id, n = n)
+
+# 以 dtm 的方式儲存TF-IDF
+tfidf_dtm <- eng_example %>% 
+  tidytext::unnest_tokens(input = text, output = token) %>% 
+  count(id, token) %>% 
+  tidytext::cast_dtm(document = id, term = token, value = n, weighting = tm::weightTfIdf)
+
+# 原始的dtm
+as.matrix(eng_example_dtm) # tm::inspect(eng_example_dtm)
+# 加權後的dtm
+as.matrix(tfidf_dtm) # tm::inspect(tfidf_dtm)
+```
+
+## 練習
+
+把作業三的第二大題的結果，轉換成以TF-IDF的方式加權，
+
+```{r practice, eval=FALSE}
+# 每字在每年出現的比重，由高排到低。
+udn_token %>% 
+  group_by(year) %>% 
+  count(word, name = "word_n") %>% 
+  mutate(year_n = sum(word_n), 
+         perc = word_n / year_n) %>% 
+  top_n(1, wt = perc) %>% 
+  ungroup()
+
+# 現在請以年份為document id，製作出TF-IDF的data frame
+(udn_tfidf <- udn_token %>% 
+  group_by(year) %>% 
+  count(word, name = "word_n") %>% 
+  ungroup() %>% 
+  ## 下面是要給同學練習的
+  tidytext::bind_tf_idf(document = year, term = word, n = word_n)
+)
+
+# 用TF-IDF值來排
+udn_tfidf %>% 
+  group_by(year) %>% 
+  top_n(1, wt = tf_idf)
+
+```
+
+比較一下結果，發現差異點在哪嗎？當然我們也可以發現，**有很多人名應該需要先加入自建斷詞辭典中，才可以改善分析的品質**。（例如：周禮）
+
+接著我們來試試看，先用詞頻的方式畫出每年常用詞，再用TF-IDF加權後的方式畫圖來看每年之關鍵詞。看用TF-IDF這種加權方法後，可以多給我們什麼資訊？
+
+```{r freq_tfidf_plot, , eval=FALSE}
+# 用詞頻看每年的新聞重點
+(freq_plot <- udn_token %>% 
+  group_by(year) %>% 
+  count(word, name = "word_n") %>% 
+  mutate(year_n = sum(word_n), 
+         perc = word_n / year_n) %>% 
+  top_n(10, wt = perc) %>% 
+  ungroup() %>% 
+  # 要讓各年可以照數值高低排序，需要加上tidytext::reorder_within
+  ggplot(aes(x = tidytext::reorder_within(x = word, by = perc, within = year), 
+             y = perc, fill = year)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ year, scales = "free_y") +
+  # 要讓各年可以照數值高低排序顯示，需要加上scale_x_reordered()
+  scale_x_reordered() + 
+  labs(x = "token", y = "percent", title = "公務員頭版新聞常用詞", subtitle = "(2002-2013年)", caption = "資料來源：研究者自製") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+)
+
+# 用TF-IDF看每年的新聞重點
+(tfidf_plot <- udn_tfidf %>% 
+  group_by(year) %>% 
+  top_n(10, wt = tf_idf) %>% 
+  ggplot(aes(x = tidytext::reorder_within(x = word, by = tf_idf, within = year), y = tf_idf, fill = year)) + 
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ year, scales = "free_y") +
+  scale_x_reordered() + 
+  labs(x = "token", y = "TF-IDF值", title = "公務員頭版新聞關鍵詞", subtitle = "(2002-2013年)", caption = "資料來源：研究者自製") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+)
+
+# 將兩張圖合併在一起看
+library(patchwork) # install.packages("patchwork")
+freq_plot + tfidf_plot
+```
+
+剛剛做的都是unigram，接著來試試bigram。
+
+```{r bigram}
+
+(bigram_tfidf_plot <- udn_token %>% 
+  # 先以每年為分組
+  group_by(year) %>% 
+  # 製作一個欄位叫nextword，再將兩個欄位資料黏在一起。
+  mutate(nextword = lead(word), # 對word欄位往上移一個觀察值
+       bigram = paste(word, nextword, sep = "_")) %>% 
+  ungroup() %>% 
+  count(year, bigram) %>% 
+  # 接著一樣算TF-IDF
+  tidytext::bind_tf_idf(document = year, term = bigram, n = n) %>% 
+  group_by(year) %>% 
+  arrange(-tf_idf) %>% 
+  slice(1:10) %>% 
+  ungroup() %>% 
+  mutate(bigram = tidytext::reorder_within(x = bigram, by = tf_idf, 
+                                           within = year)) %>% 
+  ggplot(aes(x = bigram, y = tf_idf, fill = year)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ year, scales = "free_y") +
+  scale_x_reordered() + 
+  labs(x = "token", y = "TF-IDF值", title = "公務員頭版新聞關鍵詞 bigram", subtitle = "(2002-2013年)", caption = "資料來源：研究者自製") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_flip()
+)
+```
+
+做完bigram的結果，相信大家應該可以瞭解使用者自建辭典的重要性了！
+
+## 4. 稀疏矩陣（sparse matrix）
+
+矩陣大而且有許多0（稀疏），會導致運算的效率降低，所以會視需要把出現頻率較低的詞彙刪除，這個時候我們可以使用`tm::removeSparseTerms`的方式來自動移除這些詞彙，提升運算的效能。且因為這些詞彙出現的頻率並不高，並不會嚴重影響分析結果。
+
+```{r remove_sparse}
+# 可以使用tm::removeSparseTerms
+
+# 前面雖然已經有製作過udn_dtm，但這次我們使用TF-IDF來做加權，重新製作dtm。
+udn_dtm_new <- udn_token %>% 
+  count(year, word, name = "word_n") %>% 
+  tidytext::cast_dtm(document = year, term = word, value = word_n,
+                     weighting = tm::weightTfIdf)
+
+# 移除過少出現的詞彙
+(udn_dtm_ls <- tm::removeSparseTerms(udn_dtm_new, sparse = 0.9))
+# the resulting matrix contains only terms with a sparse factor of less than sparse
+tm::inspect(udn_dtm_ls)
+# 如果想再轉換回data frame的樣子，可以使用tidytext::tidy
+(udn_tfidf_df <- tidytext::tidy(udn_dtm_ls))
+```
+
+## 5. 詞袋模型的可能問題
+
+1. 儲存資料較無效率：龐大的稀疏矩陣（sparse matrix）
+2. 文字順序無任何意義：「好的數學老師」、「數學老師的好」在詞袋模型是完全一樣的意思。可能的改善方法是使用ngram的做法。
+
+## 6. 額外補充：用羅吉斯迴歸（logistic regression）預測報導來源
+
+```{r news_logistic, message=FALSE}
+# 讀取公務員頭版新聞資料：聯合報與自由時報
+news_df <- readr::read_rds("data/news_df.rds") %>% 
+  mutate(source = factor(source)) %>% 
+  # 移掉翻譯新聞
+  filter(trans == FALSE)
+
+# 將70%的新聞資料取出來當成訓練資料
+set.seed(5691)
+n <- nrow(news_df)
+idx <- sample(1:n, size = n * 0.7) 
+trainset <- news_df[idx, ]
+testset <- news_df[-idx, ]
+
+# 將y單獨另存成物件
+trainset_target <- tibble(source = trainset$source)
+
+# 建立停用詞
+zh_stopword <- stopwords::stopwords("zh", source = "misc") %>% 
+  tibble(word = .)
+
+# 斷詞、移除停用詞、轉換DTM、使用TF-IDF加權、移除稀疏詞彙
+train_data <- trainset %>% 
+  mutate(word = segment(content, seg_engine)) %>% 
+  tidyr::unnest(word) %>% 
+  anti_join(zh_stopword, by = "word") %>% 
+  count(news_id, word) %>% 
+  tidytext::cast_dtm(document = news_id, term = word, value = n, 
+                     weighting = tm::weightTfIdf) %>% 
+  tm::removeSparseTerms(sparse = 0.85)
+
+# 重新組合成要放入 glm 模型內的訓練資料
+train_df <- as.matrix(train_data) %>% 
+  as_tibble() %>% 
+  bind_cols(trainset_target) 
+
+# 建立模型
+model <- glm(source ~ ., family = "binomial", data = train_df)
+
+# 使用建立的模型來預測訓練資料的結果：是聯合報還是自由時報的報導？
+pred_df <- predict(model, type = "response") %>% 
+  tibble(result = .) %>% 
+  # 超過50%的機率就預測為聯合報，等於或低於則為自由時報
+  mutate(pred = if_else(result > 0.5, true = "udn", false = "ltn"), 
+         # 把我們知道實際的資料也放入
+         real = trainset$source)
+
+library(caret) # install.packages("caret")
+caret::confusionMatrix(factor(pred_df$pred), reference = pred_df$real)
+```
+
+### 實際的作法會不停重複上述操作，進行參數微調，達到較佳的預測值後，實際將該模型使用在testset上再跑一次，檢視模型表現。

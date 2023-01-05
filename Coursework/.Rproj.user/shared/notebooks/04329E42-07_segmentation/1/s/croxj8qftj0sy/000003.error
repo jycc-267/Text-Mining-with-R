@@ -1,0 +1,1 @@
+{"frames":[{"func":"segment(code = txt, jiebar = seg_engine_2)","file":"","line_number":0,"end_line_number":0,"character_number":0,"end_character_number":0}],"message":"錯誤發生在 segment(code = txt, jiebar = seg_engine_2)：找不到物件 'txt'\n"}

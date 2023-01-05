@@ -1,0 +1,214 @@
+---
+title: "HW3"
+author: "Mao Wang"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE}
+library(tidyverse)
+```
+
+## 1. 英文資料前處理與斷詞
+
+請記得把分析的檔案下載到你的工作目錄。資料取自 [Martijn Schoonvelde Dataverse](https://dataverse.harvard.edu/file.xhtml?persistentId=doi:10.7910/DVN/2PNZNU/I0I7GM&version=2.0)，COOL課程平台也有放資料檔(comb.corpus.Rdata)。
+
+```{r load}
+# 使用load讀Rdata檔，會在讀取的同時，自動創建原始檔案的object，所以不用重新assign
+load("../data/comb.corpus.Rdata")
+glimpse(corpus)
+corpus <- as_tibble(corpus)
+```
+
+請使用stringr的函式，進行文字資料前處理。
+
+1. 篩選country欄位中，含有"DK"的觀察值（請注意：原始資料中有"DK"與"DK "都要選取），並存成`dk_corpus`。
+
+```{r dk_corpus}
+
+unique(corpus$country)
+# solution 1
+dk_corpus <- corpus %>% filter(str_detect(country, 
+                                          pattern = "DK")) #含有"DK"的觀察值會回傳TRUE，沒有的就回傳FALSE。
+
+# solution 2
+dk_corpus <- corpus %>%
+  mutate(
+    country = str_replace(country, # 先將所有的"DK "轉換成"DK"
+      pattern = "DK ",
+      replacement = "DK"
+    )
+  ) %>%
+  filter(country == "DK")
+```
+
+2. 請將所有存在於text欄位的數字都移除，同樣assign回`dk_corpus`。
+
+```{r dk_corpus_rmnum}
+dk_corpus <- dk_corpus %>%
+  mutate(text = str_replace_all(text,
+    pattern = "\\d+",
+    replacement = ""
+  ))
+```
+
+3. 請使用tidytext的函式，進行斷詞後，只挑選date與斷詞後的欄位，另存成`dk_token`。
+
+```{r dk_token}
+dk_token <- dk_corpus %>%
+  tidytext::unnest_tokens(
+    input = text,
+    output = word
+  ) %>%
+  select(date, word)
+```
+
+4. 移除停用字（stopwords），並assign新的object為dk_token_clean。
+
+```{r rm_stopwords}
+en_stopword <- tibble(word = stopwords::stopwords())
+
+dk_token_clean <- dk_token %>%
+  anti_join(en_stopword, by = "word")
+```
+
+5. 請將每個 token 字元數小於3的字移除（如if），並僅保留date與斷詞後的欄位，並assign回`dk_token_clean`。（提示：可使用str_length）
+
+```{r dk_token_clean}
+dk_token_clean <- dk_token_clean %>%
+  mutate(length = str_length(word)) %>%
+  filter(length >= 3) %>%
+  # filter(str_length(word) >= 3) # 更簡潔的寫法。
+  select(-length)
+```
+
+6. 請以日期分群，計算每個字在當日總字數所占的百分比。並將每日重複出現的字，化約成一筆觀察值（提示：可使用dplyr::distinct，並設定.keep_all參數為TRUE）。最後，將當日所占比重最高的字前10名列出，並由高到低排列（注意：這裡是指全部占比最高的10個字，所以最後呈現的只有10個觀察值）。
+
+```{r dk_daily_top10}
+
+# solution 1
+dk_token_clean %>%
+  group_by(date) %>%
+  mutate(day_n = n()) %>%
+  ungroup() %>% # 當使用完group_by後，請記得ungroup()
+  group_by(date, word) %>%
+  mutate(word_n = n()) %>%
+  ungroup() %>%
+  mutate(word_perc = word_n / day_n) %>%
+  arrange(-word_perc) %>%
+  # 因為沒有用到 count 與 summarize，所有的觀察值都還保留，所以即便同一天的同個字出現兩次，目前也都還保留中，使用distinct可以幫我們去掉這些重複的字。
+  distinct(date, word, .keep_all = TRUE) %>%
+  top_n(10, wt = word_perc)
+
+# solution 2
+dk_token_clean %>% 
+  group_by(date, word) %>% 
+  # 或用coung(word) %>% （跟summarize的結果會一樣）
+  summarize(word_n = n()) %>% 
+  mutate(day_n = sum(word_n), 
+         word_perc = word_n / day_n) %>% 
+  ungroup() %>% 
+  arrange(-word_perc) %>% 
+  slice(1:10)
+```
+
+## 2. 中文資料
+
+以下將使用有關公務人員報導的頭版新聞資料。
+
+```{r data}
+library(pdftools)
+
+text_vec <- pdftools::pdf_text("../data/udn_text.pdf")
+
+udn_text <- tibble(
+  id = seq(1, length(text_vec)),
+  text = text_vec
+) %>%
+  filter(str_detect(text, "公務員")) %>%
+  mutate(text = str_squish(text))
+```
+
+1. 請將每篇新聞text欄位的開頭數字與空白消除，並請創造一個新欄位`date`，將新聞中的報導年月日抽取出來，例如2013-08-21。最後請依欄位順序id, date, text排列，並存成`udn_corpus`。
+
+```{r udn_corpus}
+udn_corpus <- udn_text %>%
+  mutate(text = str_replace(text, # 因為只取消開頭的數字與空白，所以沒用str_replace_all
+    pattern = "^\\d+ ", # 加上^確保是在開頭處，\\d+去除數字，" "去除空白。
+    replacement = ""
+  )) %>%
+  mutate(date = str_extract(text, pattern = "\\d{4}-\\d{2}-\\d{2}")) %>%
+  select(id, date, text)
+```
+
+2. 使用jiebaR進行中文斷詞，不用另訂使用者字典，但請保留同樣是data frame的格式（提示：使用purrr::map與tidyr::unnest），並僅挑選id, date以及斷詞後的三個欄位，存成`udn_token`。
+
+```{r udn_corpus_token}
+library(jiebaR)
+seg_engine <- jiebaR::worker()
+udn_token <- udn_corpus %>%
+  # 創造一個新的欄位（list column）儲存斷詞的結果。
+  mutate(word = map(text, segment, seg_engine)) %>%
+  # 將list column 使用unnest。
+  unnest(word) %>% 
+  select(id, date, word)
+```
+
+3. 製作停用字data frame。（這題送分！但請不要更動這題的任何程式碼）
+
+```{r stopwords}
+zh_stopwords <- tibble(stopword = stopwords::stopwords(language = "zh", source = "misc"))
+```
+
+4. 請將udn_token中的停用字移除後，存成`udn_token_clean`。
+
+```{r udn_token_clean}
+udn_token_clean <- udn_token %>%
+  anti_join(zh_stopwords,
+    by = c("word" = "stopword") # 因為兩個data frame要合併的欄位名稱不同，所以寫法會變成這樣。
+  )
+```
+
+5. 計算各年每字出現的比例，請先將年份為NA的觀察值移除再計算。最後呈現時，將每年重複出現的字，化約成一筆觀察值（提示：可使用dplyr::distinct，並設定.keep_all參數為TRUE），將結果存成`udn_final`
+
+```{r}
+udn_final <- udn_token_clean %>%
+  mutate(year = str_extract(date, "^\\d{4}")) %>%
+  filter(!is.na(year)) %>%
+  group_by(year) %>%
+  mutate(year_n = n()) %>%
+  ungroup() %>%
+  group_by(year, word) %>%
+  mutate(
+    word_n = n(),
+    perc = word_n / year_n
+  ) %>%
+  ungroup() %>%
+  distinct(year, word, .keep_all = TRUE)
+```
+
+6. 取出各年最高頻率的字，最後呈現的data frame應該只有12列（可以參考dplyr::slice的使用方法，或是dplyr::top_n，如果使用top_n，可能會有perc相同的情況，最後會變成14列），並請依照年份由近到遠排序。
+
+```{r}
+# solution 1
+udn_final %>%
+  group_by(year) %>%
+  top_n(1, wt = perc) %>%
+  arrange(-as.numeric(year)) %>% 
+  ungroup()
+
+# solution 2
+udn_final %>%
+  mutate(year = as.numeric(year)) %>% 
+  arrange(-perc) %>% 
+  group_by(year) %>%
+  slice(1) %>% 
+  arrange(-year) %>% 
+  ungroup()
+
+```
+

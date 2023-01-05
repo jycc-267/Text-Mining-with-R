@@ -1,0 +1,83 @@
+"0","tm::inspect(fake_docs) # tm 提供的檢視函式"
+"1","<<VCorpus>>
+"
+"1","Metadata:  corpus specific: 0, document level (indexed): 0
+"
+"1","Content:  documents: 2
+"
+"1","
+"
+"1","[[1]]
+"
+"1","<<PlainTextDocument>>
+"
+"1","Metadata:  7
+"
+"1","Content:  chars: 7
+"
+"1","
+"
+"1","[[2]]
+"
+"1","<<PlainTextDocument>>
+"
+"1","Metadata:  7
+"
+"1","Content:  chars: 17
+"
+"1","
+"
+"0","class(fake_docs)"
+"1","[1]"
+"1"," ""VCorpus"""
+"1"," ""Corpus"" "
+"1","
+"
+"0","typeof(fake_docs) # 看底層資料型態，class()是看資料的外包裝型態。是list。"
+"1","[1]"
+"1"," ""list"""
+"1","
+"
+"0","fake_docs # 只能看整個物件的基本資訊"
+"1","<<VCorpus>>
+"
+"1","Metadata:  corpus specific: 0, document level (indexed): 0
+"
+"1","Content:  documents: 2
+"
+"0","fake_docs[[1]] # 看第一個文件的資訊"
+"1","<<PlainTextDocument>>
+"
+"1","Metadata:  7
+"
+"1","Content:  chars: 7
+"
+"0","fake_docs[1] # 維持 tm 物件的格式，還有其中的第一個文件"
+"1","<<VCorpus>>
+"
+"1","Metadata:  corpus specific: 0, document level (indexed): 0
+"
+"1","Content:  documents: 1
+"
+"0","fake_docs[[1]]$meta"
+"1","  author       : character(0)"
+"1","
+"
+"1","  datetimestamp: 2021-11-11 13:20:33"
+"1","
+"
+"1","  description  : character(0)"
+"1","
+"
+"1","  heading      : character(0)"
+"1","
+"
+"1","  id           : 1"
+"1","
+"
+"1","  language     : en"
+"1","
+"
+"1","  origin       : character(0)"
+"1","
+"

@@ -1,0 +1,7 @@
+"0","edit_dict()      # 編輯使用者自訂字典"
+"2","You should save the dictionary without BOM on Windows"
+"0","# 請記得要重新製作斷詞引擎，並且重新進行斷詞"
+"0","seg_engine_2 <- worker()"
+"0","result_user <- segment(code = txt, jiebar = seg_engine_2)"
+"2","錯誤發生在 segment(code = txt, jiebar = seg_engine_2)：找不到物件 'txt'
+"

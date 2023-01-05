@@ -1,0 +1,436 @@
+---
+title: "Textual Data Manipulation"
+author: "Mao Wang"
+date: "2021/11/02"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. 使用套件（Packages）
+
+在進行文字資料操弄（manipulation）前，必須先將文字資料讀入 R 的環境中。首先載入這堂課會用到的套件，**如果尚未安裝該套件，請記得先執行註解處的安裝語法**。
+
+```{r message=FALSE}
+library(tidyverse) 
+library(tm)             # install.packages("tm")
+library(gutenbergr)     # install.packages("gutenbergr")
+library(hottopic)       # devtools::install_github("hrbrmstr/hottopic")
+library(pdftools)       # install.packages("pdftools")
+```
+
+## 2. 語料庫（Corpus）
+
+**語料庫**是指已經整理好的大量文本，具有既定格式與標記。有些語料庫屬於免費開放性質，有些則必須收費才可取得。這堂課會先使用免費開放的 [Project Gutenberg](http://www.gutenberg.org/)來展示。擷取資料的方式則是透過 **`gutenbergr`** 這個套件，先來看看裡面有什麼資料。
+
+```{r gutenberg_metadata}
+gutenbergr::gutenberg_metadata %>% 
+        # dplyr::glimpse等同於str
+        dplyr::glimpse()
+# use gutenburg_id accessing to the book you want
+```
+
+後設資料（metadata）是說明資料是以何種方式記錄的說明文件，從中可以知道，共有 `r nrow(gutenbergr::gutenberg_metadata)`筆書籍資料，以及 `r ncol(gutenbergr::gutenberg_metadata)`個欄位資料。
+
+如果想知道 [Project Gutenberg](http://www.gutenberg.org/) 中，收藏的分別是哪些語言的語料，可以使用 `count` 來計算。
+
+```{r lang_percent}
+gutenbergr::gutenberg_metadata %>% 
+        # count 等於使用了 group_by(language) %>% summarize(n = n())
+        count(language) %>% 
+        mutate(total = sum(n), 
+               perc = (n / total) * 100, 
+               # total這個欄位是為了算出比率而做
+               # 要取消一個欄位的話，則可以使用NULL
+               total = NULL) %>%  
+        arrange(-perc) # 或是使用arrange(desc(perc))
+```
+
+可以發現其中超過80%是英文書籍，有5%是法文，其他語系書籍皆不超過3%，而中文則有0.7%。
+
+### 2.1 **使用API或是packages取得資料**
+
+前面使用的文字資料，是透過 `gutenbergr` 這個套件，去跟 [Project Gutenberg](http://www.gutenberg.org/)網站設立的「應用程式介面」（Application Programming Interface, API）互動，來下載所需的資料。使用API來下載資料，對資料提供方可減少因爬蟲造成的伺服器負擔，對資料需求方也可更快速的取得資料。簡單來說，如果可以透過API取得資料，請千萬不要用爬蟲的方式取得。
+
+#### 2.1.1 讀取英文資料
+
+如果要選擇**有全文**，且標題中包含 **politics** 這個字的書名，再將這些書的 **gutenberg_id** 存出，作為後續下載資料用。作法如下：
+
+```{r id_selected}
+colnames(gutenbergr::gutenberg_metadata)
+id_selected <- gutenbergr::gutenberg_metadata %>% 
+        filter(has_text == TRUE) %>% 
+        filter(str_detect(string = title, 
+                          pattern = "politics")) %>% # %>% print(width = Inf)
+        # 只將title欄位抽取出，並轉換回vector的格式
+        # 如果用select(title)，則仍會維持data frame的格式
+        pull(gutenberg_id) # 2810, 10753, 22746, 42208
+```
+
+在取得 **gutenberg_id** 後，將其放入下載資料的 function 中使用 `gutenberg_download`。至於為什麼使用 **gutenberg_id** 而不是書名，請參照 `?gutenberg_download` 的用法。
+
+```{r gutenberg_download, eval = FALSE}
+gutenberg_download(gutenberg_id, mirror = NULL, strip = TRUE,
+  meta_fields = NULL, verbose = TRUE, ...)
+```
+
+在這裡只選取 **gutenberg_id** 為 id_selected 的第 2 個 id 展示。
+
+```{r df_politics, message = FALSE}
+df_politics <- gutenbergr::gutenberg_download(
+        # 以第二本書為例，書名為 Open Source Democracy: How online communication is changing offline politics
+        gutenberg_id = id_selected[2]
+        # , 
+        # 設定meta_fields的話，會讓其對應的欄位也存入下載的dataframe
+        # meta_fields = "title"
+        )
+```
+
+觀察一下資料的儲存方式，**text** 欄位看起來像是書本的每列文字，都儲存成一個觀察值。
+
+```{r display_politics, echo = FALSE, message = FALSE}
+df_politics %>% 
+        head() %>% 
+        # knitr::kable()是為了轉換成html用的，一般不需要用。
+        knitr::kable()
+```
+
+國外相對有比較多的英文語料庫資源，有興趣的也可以看看 [manifestoR](https://manifesto-project.wzb.eu/information/documents/api) 這個有關各國政黨選舉宣言之語料庫，因為該語料庫須線上申請帳號（account），並設定 API Key，上課實作需要花比較多時間，請同學們回去測試，有問題可以隨時上 [Piazza](https://piazza.com/class/ktoinc45ynri1)詢問。
+
+#### 2.1.2 讀取中文資料
+
+當然 [Project Gutenberg](http://www.gutenberg.org/) 也有中文資料，我們也可以用上述的方法取得。有一本叫 [臺灣外記](https://zh.wikipedia.org/wiki/%E8%87%BA%E7%81%A3%E5%A4%96%E8%A8%98) 的書，讓我們下載來看看。
+
+```{r taiwan_book}
+# Project Gutenberg有一本叫做「臺灣外記」的書
+taiwan_id <- gutenbergr::gutenberg_metadata %>% 
+        filter(language == "zh", title == "臺灣外紀") %>% 
+        pull(gutenberg_id)
+
+df_taiwan <- gutenbergr::gutenberg_download(
+        gutenberg_id = taiwan_id)
+```
+
+```{r display_taiwan, echo = FALSE, message = FALSE}
+df_taiwan %>% 
+        head() %>% 
+        # knitr::kable()是為了轉換成html用的，一般不需要用。
+        knitr::kable()
+```
+
+我們可以使用另一個叫 [hottopic](https://github.com/hrbrmstr/hottopic) 的 package 來看目前 google 搜尋上有哪些熱門議題。
+
+```{r hottopic}
+hottopic_taiwan <- hottopic::get_topics(country = "Taiwan") %>% 
+        # select也可以當成是重新排列column的功能，
+        # everything()則是全選的意思
+        select(title, news_item_title, everything())
+```
+
+```{r display_hottopic, echo = FALSE}
+hottopic_taiwan %>%
+    head() %>% 
+    # knitr::kable()是為了轉換成html用的，一般不需要用。
+    knitr::kable()
+```
+
+可以比對一下 [google網站](https://trends.google.com.tw/trends/trendingsearches/daily?geo=TW) 上的資料是否一致。
+
+### 2.2 使用自有檔案
+
+除了利用 API 擷取或是 package 內附的文字資料，當然如果你手邊已經有資料，也可以將其讀入使用。
+
+#### 2.2.1 讀取英文資料
+
+```{r read_lines}
+
+trump <- read_lines(file = "data/trumpspeeches.txt") # 這還是vector的儲存格式
+length(trump)
+class(trump)
+
+# tibble的用法跟data.frame一樣，只是變成是tidyverse的形式
+# 不建議直接print(trump)出來看，直接執行很容易當機
+(trump_df <- tibble::tibble(trump_text = trump)) # 這是轉成data frame的儲存格式，column trump_text的 value是trump。
+
+```
+
+可以看出讀入的資料 `trump` 變成了一個長度 `r length(trump)`的向量（vector），但原始文字資料是怎麼被電腦解讀並分成`r length(trump)`個元素（element）？要瞭解就必須查詢使用`read_lines`這個讀入文字資料的function， "The line separator. Defaults to \\n, commonly used on POSIX systems like macOS and linux. For native windows (CRLF) separators use \\r\\n." 意思就是， `read_lines`預設是遇到 **\\n** （Mac或Unix）或 **\\r\\n** （Windows）（換列）就會視作是一個字串的結尾，另一個字串的開始，也就是另一筆觀察值。
+
+#### 2.2.2 讀取中文資料
+
+如果你的中文資料是像前面提到的「純文字檔」（`.txt`），可以用一樣的方式將文字讀入。但如果你的資料是網路上的 pdf 檔，也有相對應的 package 可以協助你快速處理。接著我們要用 `pdftools` 來讀入文字資料。
+
+```{r}
+# 檔案路徑
+newtaipei_path <- "http://doc2-exthird.ntpc.gov.tw/NTPC_SODPUBLISH/FILE/0000000/PUBLISH/108/1/10811.pdf"
+
+newtaipei <- pdftools::pdf_text(pdf = newtaipei_path)
+
+head(newtaipei, n = 2)
+```
+
+要注意的是，`pdf_text` 是以每頁當成一個 element 存成向量（vector）
+
+## 3. 文字資料分析框架
+
+之所以會稱為「分析框架」，是因為在其套件的框架底下，可以從頭到尾完整地處理文字資料分析的各種任務，舉凡讀入資料、資料清理、格式轉換、統計分析等，都可以在一個套件中完成。
+
+這邊會先跟大家介紹`tm`，後續會再跟大家介紹`tidytext`。 `tm` 的底層主要是以向量的格式儲存文字資料，而 `tidytext` 主要是以 data frame 的格式來儲存。會先介紹 `tm` 是因為這個套件算是最早在 R 出現的文字分析框架，後續有許多套件都是建立在其基礎上發展。目前最流行的分析框架還有`qunateda` (<https://quanteda.io>)，但因為時間有限，課堂上沒辦法介紹這麼多，請同學可以回去自己試試。
+
+以下我們來看一個簡單的範例：
+
+```{r tm_simple_source}
+docs_vec <- c("今天天氣很不好", "This another one.")
+
+docs_df <- data.frame(
+    # 必須以doc_id 與 text 為data frame 的首兩欄
+    doc_id = seq(from = 1, to = length(docs_vec)), 
+    text = c("今天天氣很不好", "This another one."))
+```
+
+假設你有兩種不同的格式，可以依據資料格式選用不同的讀入函式，但其實大家現在應該也具有這種轉換格式的能力，可以依自己習慣處理。以下是tm套件的方式：
+
+```{r}
+fake_docs <- 
+    # 說明資料來源是Vector，
+    # 也可以用 DirSource 匯入整個資料夾文件。
+    # 讀入vector
+    VectorSource(docs_vec) %>%
+    # 轉換成語料庫
+    VCorpus()
+
+fake_docs_df <- 
+    # 也可以用 DataframeSource
+    # 讀入dataframe
+    DataframeSource(docs_df) %>% 
+    VCorpus()
+```
+
+來看看經過轉換成 `VCorpus` 的物件會變成怎樣？
+
+```{r}
+tm::inspect(fake_docs) # tm 提供的檢視函式
+class(fake_docs)
+typeof(fake_docs) # 看底層資料型態，class()是看資料的外包裝型態。是list。
+
+fake_docs # 只能看整個物件的基本資訊
+fake_docs[[1]] # 看第一個文件的資訊
+fake_docs[1] # 維持 tm 物件的格式，還有其中的第一個文件
+
+fake_docs[[1]]$meta
+
+```
+
+瞭解了基本的格式後，我們用前面已經讀入的資料來實作，分別是 **trump** 與 **newtaipei** 兩個向量物件。
+
+```{r real_data}
+trump_corpus <- VectorSource(x = trump) %>% VCorpus()
+newtaipei_corpus <- VectorSource(x = newtaipei) %>% VCorpus()
+
+trump_dtm <- tm::DocumentTermMatrix(trump_corpus)
+# row是document id，column是document中的term。
+# 這裡雖然我們沒有做分詞，但其實在轉換為matrix的時候，每個 column 就會放入語料中特有的字詞，實際上已經是做分詞了，並且是以空格為分詞原則。
+
+# 檢視 trump_dtm 的內容
+inspect(trump_dtm)
+
+# 將詞頻超過200次的字挑出來
+origin_freq <- findFreqTerms(trump_dtm, lowfreq = 200)
+```
+
+![文字資料分析流程](https://www.tidytextmining.com/images/tmwr_0601.png)
+
+當然如果只是像 **trump_corpus** 與 **newtaipei_corpus** 這樣的 `corpus` 物件，本身並不是可以直接分析的形式。一般情況下會轉換為矩陣的格式（運算速度較快），但如果直接就用原始資料開始分析，會發現大有問題！因為有很多字根本對我們來說，就只是雜訊（noise）而已，所以在分析前，要先把這些「無意義」的字拿掉。
+
+## 4. 文字資料清理
+
+```{r tm_cleanup}
+trump_corpus_clean <- trump_corpus %>% 
+    # 轉換為小寫
+    tm_map(tm::content_transformer(tolower)) %>% 
+    # 移除 stopwords 停用字
+    tm_map(tm::removeWords, 
+           words = stopwords("en")) %>% 
+    # 移除標點符號
+    tm_map(tm::removePunctuation) %>% 
+    # 移除數字
+    tm_map(tm::removeNumbers) %>% 
+    # 將多餘的空白刪除
+    tm_map(tm::stripWhitespace) # 洩題?
+```
+
+接著讓我們比較一下，清理資料前與清理資料後的差異。
+
+```{r freq_comparison, message = FALSE}
+# 清理前
+(example_1 <- content(trump_corpus[[2]]) %>% 
+    # 只擷取前100個字
+    stringr::word(start = 1, end = 100))
+
+# 清理後
+(example_2 <- content(trump_corpus_clean[[2]]) %>% 
+    # 只擷取前100個字
+    stringr::word(start = 1, end = 100))
+
+trump_dtm_clean <- tm::DocumentTermMatrix(trump_corpus_clean)
+clean_freq <- findFreqTerms(trump_dtm_clean, lowfreq = 200)
+
+origin_freq
+clean_freq
+
+# 資料清理後，甚至出現了原先高詞頻中沒出現的字。
+setdiff(clean_freq, origin_freq)
+```
+
+清乾淨後的語料庫，光是看字詞出現的頻率就有截然不同的結果。**但請非常注意，資料清理並沒有一定的流程，還是要依照不同的研究目的做不同的設計。**這裡還沒有提到詞幹提取（stemming）與詞形還原（lemmatization）的問題，我們等到進入文字探勘模型後，會再說明。
+
+### 4.1 練習
+
+```{r exercise_1}
+# 不同的資料清理順序會有影響嗎？
+# yes
+
+```
+
+前面提到的是使用 `tm` 的資料清理方式，但由於 `tidyverse` 的流行，也有越來越多人直接使用 data frame 的方式來清理資料，其中最常用的就是 `stringr`。以下將簡單的介紹幾個常用的功能。
+
+```{r stringr}
+# 使用前面已經建立的Trump演說資料
+trump_df <- tibble::tibble(
+    doc_id = seq(from = 1, to = length(trump)), 
+    text = trump)
+
+(new_trump_df <- trump_df %>% 
+    mutate(
+      # 消除演說中有提到 Trump 自己名字的字
+      # str_replace 與 str_replace_all 的差別在哪？
+      text = str_replace_all(string = text, 
+                             pattern = "Donald|Trump", replacement = ""), 
+      # 把所有的字改為小寫
+      text = str_to_lower(text), 
+      # 增加一個計算「字元數」的欄位
+      chr_length = str_length(text), 
+      # 增加一個計算「字數」的欄位
+      word_count = str_count(string = text, 
+                       pattern = "\\w+"), 
+      # 增加一個計算演說中有沒有提到「Clinton」或「Hillary」的欄位
+      clinton = str_detect(string = text, 
+                           pattern = "[Cc]linton|[Hh]illary"), 
+      # 增加一個計算演說中鼓掌次數
+      applause = str_count(string = text, 
+                           pattern = "applause")) 
+)
+```
+
+透過 `stringr` ，不僅可以對文字資料做清理，還可以擷取出文字中的特性，作為新的變項欄位。想想看，怎麼可以像在 `tm` 中去除標點符號與數字？在 `stringr` ，還有很多好用的函式，如 `str_squish`、`str_split`、`str_subset`、`str_extract`都很好用。
+
+分詞雖然是下次的主題，但有興趣的同學還是可以試試，並思考一下移除停用字的作法是否理解了。
+
+```{r tokenization_spoiler}
+# 作業會有!!!
+# 分詞使用tidytext::unnest_token，但分詞後還是維持data frame的格式
+(token_df <- new_trump_df %>% 
+    tidytext::unnest_tokens(input = text, output = word))
+
+# 如果要移除停用字，就要用anti_join的方式處理
+stopword <- tibble(word = stopwords())
+
+token_df %>% anti_join(stopword, by = "word")
+
+```
+
+當你要處理一連串的資料清理步驟，可以將這些操作過程，全部包入一個你自製的function中。Hadley Wickham 認為，如果同一件事需要重複做3次以上，你就可以考慮製作自己的函式來減輕你的工作量以及錯誤率，do not repeat yourself！
+
+```{r}
+my_text_preprocessing <- function(df, text = text){
+    df <- df %>% 
+      mutate(text = str_replace_all(text, 
+                                    pattern = "[0-9]+", 
+                                    replacement = ""), 
+             text = str_replace_all(text, 
+                                    pattern = "[:punct:]",
+                                    replacement = ""), 
+             text = str_to_lower(text))
+    return(df)
+}
+
+my_text_preprocessing(trump_df)
+```
+
+## 5. 正規表示法（Regular Expression）
+
+正規表示法是一種功能相當強大的文字表示方式，但也正因為它的抽象性與組合性，真正精熟的人並不多，其實我們在前一個例子當中，就已經用到不少正規表示法了，主要都是在參數為 **pattern** 時，希望抓取出一定的規則，加以計算或替換。以下會簡單介紹一些基本用法，但還是要多加練習才能精熟。我們將用前面製作的 `example_1` 練習。
+
+```{r regex_1}
+# str_extract 可以幫我們抽取出符合模式的"第一個情況"
+example_1 %>% str_extract(pattern = "\\w") # 一個字母
+example_1 %>% str_extract(pattern = "\\w+") # 一個字
+example_1 %>% str_extract(pattern = "\\d+") # 一串數字
+
+# str_extract_all 可以幫我們抽取出符合模式的"全部情況"
+# 但是回傳的值會變成是"list"的格式，如果要轉換回vector，需要用unlist()
+example_1 %>% str_extract_all(pattern = "\\w+") %>% unlist()
+example_1 %>% str_extract_all(pattern = "\\d+") # [0-9]+ 意思一樣
+
+# \\s 是空白（whitespace）的意思
+# \\w 是word
+# \\d 是數字digit
+```
+
+正規表示法並不限於 R 語言才能使用，但是因為 R 自身語言的限制，會有些地方與其他程式語言略有不同。如 `\w` （special sequence），就必須在 \\w 的前面多輸入一次 \\， R才能判讀接下來是真的要輸入 \\符號，故又稱為「逃脫符號」（escape）。
+
+1.  使用\[ \]可以創造特有的文字集合：
+
+-   `.`: 任何字元
+-   `[abc]`: 符合a, b, 或c
+-   `[a-z]`: 符合介於a-z的字母
+-   `[^abc]`: 除了a, b, c外的任何字母，\[\^ \]代表不要的意思。
+-   `^`: pattern開頭
+-   `$`: pattern結尾
+
+2.  有許多已經內建的集合可以直接使用，如下：
+
+-   `[:punct:]`: punctuation.
+-   `[:alpha:]`: letters.
+-   `[:lower:]`: lowercase letters.
+-   `[:upper:]`: upperclass letters.
+-   `[:digit:]`: digits.
+-   `[:alnum:]`: letters and numbers.
+-   `[:graph:]`: letters, numbers, and punctuation.
+-   `[:print:]`: letters, numbers, punctuation, and whitespace.
+-   `[:space:]`: space characters (basically equivalent to `\s`).
+-   `[:blank:]`: space and tab.
+
+```{r regex_2}
+# 挑出所有首字母大寫的字
+example_1 %>% str_extract_all(pattern = "[A-Z][a-z]+")
+
+# 找出開頭是 G 或 g 開頭的字，以及開頭是 b 的字
+example_1 %>% 
+    str_extract_all(pattern = "\\w+") %>% 
+    unlist() %>% 
+    str_subset(pattern = "^[Ggb]")
+```
+
+```{r regex_3}
+# 為什麼下面的程式碼找不到？
+example_1 %>% 
+    str_extract_all(pattern = "^[Gg]")
+# 因為example_1的開頭是space，而非Gg，又example_1本身就是一整個string，所以從一開始條件就不偵測不到了。
+# 作業!
+```
+
+3.  你也可以決定該字元重複出現的次數來抓取模式：
+
+-   `?`: 0 or 1, prefer 0.
+-   `+`: 1 or more, match as few times as possible.
+-   `*`: 0 or more, match as few times as possible.
+-   `{n,}`: n or more, match as few times as possible.
+-   `{n,m}`: between n and m, , match as few times as possible, but at least n.
+
+更多有關正規表示法的資料，可以參考 [stringr & regex](https://cran.r-project.org/web/packages/stringr/vignettes/regular-expressions.html)。

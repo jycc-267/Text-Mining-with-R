@@ -1,0 +1,2 @@
+"0","dk_token_clean <- dk_token_clean %>%"
+"0","    filter(nchar(dk_token_clean$word) >= 3)"

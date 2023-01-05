@@ -1,0 +1,135 @@
+---
+title: "HW6"
+author: "Your_Name"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. 主題模型
+
+請使用`news_df.rds`這個檔案，分析聯合報與自由時報有關公務員頭版頭條的主題，請找出你認為最適合的主題數，並將每個主題取10個最高機率的用詞，以ggplot2畫出來。請依檢核點要求完成。
+
+```{r package, message=FALSE}
+library(tidyverse)
+library(jiebaR)
+library(tmcn)
+library(tidytext)
+
+library(topicmodels)
+library(ldatuning)
+
+# Mac設定中文字型
+my_theme <- theme_bw() + 
+  theme(text = element_text(family = "STHeitiTC-Light"))
+theme_set(my_theme)
+```
+
+1. 資料清理：斷詞、移除翻譯報導（trans欄位）、移除停用字（請將數字也移除）、轉換成dtm
+
+```{r data_cleaning_dtm}
+# 讀入資料
+news <- readr::read_rds("../data/news_df.rds") %>% 
+        # 移除翻譯報導
+        filter(trans == FALSE) %>% 
+        select(news_id, source, content)
+        
+
+# 建立斷詞引擎
+seg_engine <- jiebaR::worker(bylines = TRUE)
+
+# 建立停用詞
+zh_stopword <- stopwords::stopwords(language = "zh", 
+                                    source = "misc") %>% 
+        tibble(word = .) %>% 
+        # 轉換成繁體
+        mutate(word = tmcn::toTrad(word))
+
+# 建立dtm
+news_dtm <- news %>% 
+        # 斷詞
+        mutate(token = jiebaR::segment(content, seg_engine)) %>% 
+        # 將斷詞後的list column展開
+        unnest(token) %>% 
+        # 移除停用詞
+        anti_join(zh_stopword, by = c("token" = "word")) %>% 
+        # 移除數字的觀察值
+        filter(!str_detect(token, pattern = "\\d")) %>% 
+        # 計算文件與用詞數
+        count(news_id, token) %>% 
+        # 轉換成dtm格式
+        tidytext::cast_dtm(document = news_id, 
+                           term = token, 
+                           value = n)
+news_dtm
+```
+
+2. 找出可能最適合的主題數（seed設定為5691）
+建議：第一次先以10為單位，找10-50個主題，判斷哪個區間可能有最適主題數，然後再尋找一次該區間的最適主題數。
+
+```{r find_k, message=FALSE}
+# 第一次先找尋區間
+result <- ldatuning::FindTopicsNumber(
+        dtm = news_dtm, 
+        topics = seq(from = 10, to = 50, by = 10),
+        metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"), 
+        method = "Gibbs", 
+        control = list(seed = 5691),
+        mc.cores = 2L, 
+        verbose = TRUE)
+
+result
+# 畫圖看大概幾個主題比較適合
+ldatuning::FindTopicsNumber_plot(result)
+## 第一次畫出的圖，最適區間介於20-30。
+
+# 第二次找最適主題數
+result_sec <- ldatuning::FindTopicsNumber(
+        dtm = news_dtm, 
+        topics = seq(from = 15, to = 30, by = 1),
+        metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"), 
+        method = "Gibbs", 
+        control = list(seed = 5691),
+        mc.cores = 2L, 
+        verbose = TRUE)
+
+result_sec
+# 畫圖看大概幾個主題比較適合
+ldatuning::FindTopicsNumber_plot(result_sec)
+## 22個主題數看起來是一個適合的選擇
+```
+
+3. 建立主題模型（LDA）
+提醒：依照你認為最適的主題數來建立模型
+
+```{r topic_modeling}
+news_lda <- topicmodels::LDA(news_dtm, 
+                             k = 22, 
+                             method = "Gibbs", 
+                             control = list(seed = 5691))
+```
+
+4. 畫出主題模型的結果
+
+```{r plot_result}
+news_plot <- tidytext::tidy(news_lda, matrix = "beta") %>% 
+        group_by(topic) %>% 
+        top_n(10, wt = beta) %>% 
+        ungroup()
+
+ggplot(news_plot, aes(x = tidytext::reorder_within(term, 
+                                                   by = beta, 
+                                                   within = topic), 
+                      y = beta, fill = factor(topic))) +
+        geom_col(show.legend = FALSE) + 
+        scale_x_reordered() +
+        facet_wrap(~ topic, scales = "free_y") + 
+        labs(x = "term", y = "beta") +
+        coord_flip()
+```
+
+想一想，各個主題可能在討論什麼？（提醒：斷詞的品質影響文字探勘的品質，請務必在期末報告的時候多花心力在斷詞品質上。）
+

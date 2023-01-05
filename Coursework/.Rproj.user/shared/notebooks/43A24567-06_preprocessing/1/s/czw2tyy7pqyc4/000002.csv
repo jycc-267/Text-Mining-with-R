@@ -1,0 +1,7 @@
+"0","# Project Gutenberg有一本叫做「臺灣外記」的書"
+"0","taiwan_id <- gutenbergr::gutenberg_metadata %>% "
+"0","        filter(language == ""zh"", title == ""臺灣外紀"") %>% "
+"0","        pull(gutenberg_id)"
+"0",""
+"0","df_taiwan <- gutenbergr::gutenberg_download("
+"0","        gutenberg_id = taiwan_id)"

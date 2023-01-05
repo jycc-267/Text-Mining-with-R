@@ -1,0 +1,139 @@
+---
+title: "HW5"
+author: "政治系國關組大五 簡郁展"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. TF-IDF
+
+請使用`trump_twitter_archive.csv`這個檔案，分析川普每個月TF-IDF值最高的前10字，並用ggplot2畫出來。要讓別人能夠更容易看懂你的code，請善用註解（comment）。
+
+檢核點（每個檢核點1分）：
+1. 斷詞、移除停用詞。
+2. 以每月為單位（document），計算出TF-IDF的數值，選取出每月TF-IDF值最高的10字。
+3. 以ggplot2畫出本圖（請見範例圖檔，並以TF-IDF值排序）。
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(jiebaR)
+library(tidytext)
+library(tm)
+library(ropencc)
+library(ggthemes)
+```
+
+```{r tf-idf, message=FALSE, warning=FALSE}
+trump <- readr::read_csv(file = "data/trump_twitter_archive.csv")
+
+# 載入停用詞字典
+stopword <- tibble(word = stopwords::stopwords(language = "en"))
+
+# 文字前處理
+trump_clean <- trump %>%
+    # 移除數字、百分比與網址(包含AMP連結)
+    mutate(text = str_replace_all(text, 
+                                  pattern = "[0-9]+%?|https://t.co/[A-Za-z\\d]+|&amp;",
+                                  replacement = "")) %>%
+    # 斷詞、移除停用字
+    tidytext::unnest_tokens(input = text, output = tokenized_text) %>%
+    anti_join(stopword, by = c("tokenized_text" = "word")) %>%
+    # 轉換時間資料、補上NA值
+    mutate(created_at = as.Date(lubridate::mdy_hms(created_at))) %>%
+    tidyr::fill(created_at, .direction = "up") %>%
+    # 提取年月資料，計算詞頻
+    mutate(year_month = str_extract(created_at, pattern = "^\\d{4}-\\d{2}")) %>%
+    count(year_month, tokenized_text)
+
+# 建立tf-idf，計算tf-idf point
+trump_tfidf <- trump_clean %>% 
+    tidytext::bind_tf_idf(term = tokenized_text, document = year_month, n = n) %>%
+    # 選取出每月TF-IDF值最高的10字
+    group_by(year_month) %>%
+    arrange(desc(tf_idf)) %>%
+    slice_head(n = 10) %>%
+    ungroup()
+
+ggplot(trump_tfidf) +
+    geom_bar(aes(x = tidytext::reorder_within(x = tokenized_text, 
+                                              by = tf_idf, 
+                                              within = year_month), 
+                 y = tf_idf, 
+                 fill = year_month), 
+             stat = "identity") +
+    tidytext::scale_x_reordered() +
+    # 以year_month為類別變項繪製圖表
+    facet_wrap(vars(year_month), scales = "free") +
+    # 增加標題、副標、xy軸名稱、出處
+    labs(title = "Trump's Tweets", 
+         subtitle = "2018/12/31-2019/05/11", 
+         caption = "Source: Jimmy", 
+         x = "tokens", 
+         y = "TF-IDF") + 
+    # 翻轉xy軸
+    coord_flip() +
+    # 移除圖例
+    theme(legend.position = "none")
+```
+
+## 2. 情緒分析
+
+以`news_df.rds`這個檔案，畫出兩大報有關公務人員頭版新聞的情緒趨勢。要讓別人能夠更容易看懂你的code，請善用註解（comment）。
+
+檢核點（每個檢核點1分）：
+1. 斷詞、移除停用字。
+2. 加入情緒辭典標註。
+3. 以ggplot2畫出本圖（請見範例圖檔，以source與情緒區分來呈現）
+
+```{r senti_analysis, message=FALSE, warning=FALSE}
+news <- readRDS("data/news_df.rds")
+
+# 建立斷詞引擎、載入停用詞字典
+tokenizer <- worker(bylines = TRUE)
+zh_stopwords <- tibble(stopword = stopwords::stopwords(language = "zh", source = "misc"))
+
+# 將停用詞字典簡轉繁
+trans <- converter(S2TWP)
+zh_stopwords$stopword <- run_convert(trans, zh_stopwords$stopword)
+
+# 載入、合併正負面中文情緒字典
+positive_dict <- readr::read_delim(file = "data/NTUSD_positive_unicode.txt", 
+                                   delim = "\n", col_names = FALSE) %>% 
+    mutate(sentiment = "positive") %>% 
+    rename(word = X1)
+
+negative_dict <- readr::read_delim(file = "data/NTUSD_negative_unicode.txt", 
+                                   delim = "\n", col_names = FALSE) %>% 
+    mutate(sentiment = "negative") %>% 
+    rename(word = X1)
+
+zh_sentiments <- positive_dict %>% 
+  bind_rows(negative_dict)
+
+# 斷詞、移除停用字、加入情緒標註
+news_clean <- news %>%
+    mutate(token = segment(code = content, jiebar = tokenizer)) %>% 
+    unnest(cols = token) %>%
+    anti_join(zh_stopwords, by = c("token" = "stopword")) %>%
+    inner_join(zh_sentiments, by = c("token" = "word")) %>%
+    mutate(date = as.Date(date)) %>%
+    count(date, source, sentiment)
+
+ggplot(news_clean, aes(x = date, y = n, color = sentiment)) + 
+    geom_line(size = 0.75) + 
+    geom_smooth(color = "skyblue", se = TRUE) +
+    # 以情緒標註與新聞來源做為類別變向
+    facet_grid(rows = vars(sentiment), cols = vars(source)) +
+    # 增加標題、副標、xy軸名稱、出處
+    labs(x = "Date", 
+         y = "Count",
+         title = "Sentimental Trends of Two Newspaper toward Public Servant",
+         subtitle = "2003-2014", 
+         caption = "Source: Jimmy") +
+    theme_stata()
+```
+

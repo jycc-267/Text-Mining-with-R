@@ -1,0 +1,5 @@
+"0","library(tidyverse) "
+"0","library(tm)             # install.packages(""tm"")"
+"0","library(gutenbergr)     # install.packages(""gutenbergr"")"
+"0","library(hottopic)       # devtools::install_github(""hrbrmstr/hottopic"")"
+"0","library(pdftools)       # install.packages(""pdftools"")"

@@ -1,0 +1,16 @@
+"0","example_1 %>% 
+    str_extract_all(pattern = ""\\w+"") %>% 
+    unlist() %>% 
+    str_subset(pattern = ""^[Ggb]"")
+"
+"1","[1]"
+"1"," ""Good""    "
+"1"," ""but""     "
+"1"," ""backing"" "
+"1"," ""by""      "
+"1"," ""Giuliani"""
+"1"," ""because"" "
+"1"," ""backed""  "
+"1"," ""Gaza""    "
+"1","
+"

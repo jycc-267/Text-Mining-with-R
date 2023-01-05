@@ -1,0 +1,236 @@
+---
+title: "Segmentation"
+author: "Mao Wang"
+date: "2021/11/9"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r package, message=FALSE}
+library(tidyverse)
+library(tidytext) # install.packages("tidytext")
+library(jiebaR) # install.packages("jiebaR")
+library(stopwords) # install.packages("stopwords")
+```
+
+## 1. 英文斷詞
+
+只要語料字詞間是用空白隔開，都與英文的斷詞方式相同，會以**空白處**作為斷詞的依據。以下將使用**tidytext**中的unnest_tokens來進行斷詞。斷詞過後的每個詞，一般會稱為token。
+
+```{r}
+# 分詞使用tidytext::unnest_token，但分詞後還是維持data frame的格式
+
+trump <- read_lines("data/trumpspeeches.txt")
+
+trump_df <- tibble::tibble(
+        doc_id = seq(from = 1, to = length(trump)), 
+        text   = trump
+)
+
+(token_df <- trump_df %>% 
+    # unnest_tokens 預設會改為小寫，以及移除標點符號
+    tidytext::unnest_tokens(input = text, output = word)
+) # 預設 token = "words"
+
+# 如果要移除停用字，就要用anti_join的方式處理
+stopword <- tibble(word = 
+                     stopwords::stopwords(language = "en"))
+
+# 使用anti_join的方式移除停用字
+clean_token_df <- token_df %>% 
+    anti_join(stopword, by = "word")
+
+clean_token_df %>% 
+  count(word, sort = TRUE)
+```
+
+clean_token_df已經是一個tidy的文字資料data frame，搭配tidytext其他函式，可以更進一步將data frame 轉換為先前提到的Document-Term Matrix （DTM），幫助我們使用更多不同的文字探勘方法，細節將留到期中後，現階段請先將斷詞的方法學好，並思考如何改善斷詞的正確性才是重點。
+
+在將語料切割，以及計算出所對應的頻率，很多人會畫文字雲來展示哪些字詞出現的頻率最高，但其實文字雲並不是一種最適合的視覺呈現方式，因為其提供的資訊太少（或是說雜訊太多），建議還是使用長條圖（bar chart）會比較適合。
+
+```{r frequency_plot}
+
+clean_token_df %>% 
+    # 計算每字次數
+    count(word) %>% 
+    # 選出前10多的用字
+    top_n(n = 10, wt = n) %>% 
+    arrange(-n) %>% 
+    # 畫圖（注意從這邊開始用`+`連接）
+    ggplot(aes(x = reorder(word, n), y = n)) + 
+    # 畫直方圖
+    geom_col() +
+    # 加上數字標示
+    geom_text(aes(label = n), hjust = 1, nudge_y = -7,
+              color = "white") + 
+    # 加上各種圖標
+    labs(x = "Word", y = "Frequency", title = "Trump's Top 10 Speech Words") + 
+    # x, y 軸對調
+    coord_flip() + 
+    # 調整theme
+    theme_light()
+
+```
+
+當然除了將每個字都切割成一個 token 外，也可以視研究需要將兩個字切成一個 token，或是更多字也沒問題。
+
+```{r bigram}
+bigram_df <- trump_df %>% 
+    unnest_tokens(input = text, output = bigram, 
+                  token = "ngrams", n = 2)
+bigram_df
+```
+
+
+## 2. 中文斷詞
+
+### 2.1 製作你的斷詞引擎
+
+在開始分詞前，你必須先製作一個分詞引擎，告訴 R 你要怎麼進行分詞。
+
+```{r worker}
+# 使用 worker 建立分詞引擎
+seg_engine <- worker() # seg_engine <- worker(bylines = TRUE) # 會回傳成list，後面就不用使用 map
+
+# 檢視剛做好的分詞引擎裡面有什麼
+seg_engine
+
+# show_dictpath()  # 顯示字典路徑，在裡面可以找到各種字典檔進行修改。
+# edit_dict()      # 編輯使用者自訂字典，增進斷詞效果
+```
+
+worker這個function裡面沒有設定任何參數，並不代表是一個空的函式，只是我們採用了 worker 預設的參數，如果只執行 worker()，就可以看到各項預設值。其中「預設分詞字典」（dict）、「user」（使用者自訂字典）、「停用字字典」（stop_word）。
+
+這些字典的路徑，可以用`show_dictpath()`去查詢，點擊其中的文字檔進行修改。
+
+### 2.2 中文斷詞實作
+
+在建立好斷詞引擎後，需要搭配`jiebaR::segment`這個函式來操作。簡單來說，segment是執行斷詞的機器，但是其中的 seg_engine（worker）才是判斷如何斷詞的處理器。
+
+```{r seg_example}
+
+txt <- "教育部青年署推動「大專生公部門見習計畫」，今年第二梯次（7月至8月）職缺包括外交部、經濟部、衛生福利部等中央部會單位，職缺多元豐富，每小時新臺幣150元的見習津貼，每月見習時數固定50小時，暑假見習梯次職缺，4月起陸續上線，想近距離體驗公務員上班生活，歡迎35歲以下大專同學把握機會。很多年輕人考慮投入公職考試，事前卻不了解公部門的生態，而陷入徬徨。教育部協調政府各單位，今年預計開出550到650人次的見習職缺，提供35歲以下、大專在學青年投遞履歷申請。"
+# 文字來源：https://tw.news.yahoo.com/%E5%A4%A7%E5%B0%88%E5%85%AC%E9%83%A8%E9%96%80%E8%A6%8B%E7%BF%92-%E6%9A%91%E5%81%87%E8%81%B7%E7%BC%BA4%E6%9C%88%E9%99%B8%E7%BA%8C%E4%B8%8A%E7%B7%9A-160000620.html
+
+result <- segment(code = txt, jiebar = seg_engine)
+result # 有110個element的文字向量，也稱作token。
+```
+
+以「青年署」為例，應該是同一個詞，但卻被斷為兩個（「青年」、「署」），此時可以透過修改使用者自訂字典來
+
+```{r eval=FALSE}
+edit_dict()      # 編輯使用者自訂字典
+```
+
+```{r eval=FALSE}
+# 請記得要重新製作斷詞引擎，並且重新進行斷詞
+seg_engine_2 <- worker()
+result_user <- segment(code = txt, jiebar = seg_engine_2)
+
+class(result_user) 
+length(result_user) # 查看結果，是一個有109個element的文字向量
+```
+
+瞭解如何處理中文斷詞後，我們要回到data frame的格式下來中文斷詞。因為data frame的每個欄位其實本身就是一個向量 （vector），所以沒辦法直接回存成data frame的格式。但 vector 除了可以儲存字串、數值、布林邏輯外，也可以將list存在其中。
+
+```{r}
+# 創一個長度為5的list
+list_vec <- vector(mode = "list", 5)
+
+# 將剛剛的list_vec塞入data frame
+tibble_list_col <- tibble::tibble(id = 1:5, 
+               list_col = list_vec)
+
+# list_col就是一個list-column
+tibble_list_col
+```
+
+這裡會使用到 **purrr::map** 這個function，產生的結果將會變成一個列表（list），將所對應的文字切割成分詞結果，並用list的方式存在新的欄位中。我們先從基本的形式來看。
+
+```{r map_example}
+
+# 用開平方（sqrt）這個函式，分別處理1:5這五個數字。
+lapply(1:5, sqrt)
+purrr::map(1:5, sqrt) # map(要被fun執行的東西, fun)
+
+# 結合上面製作的df，可以使用mutate直接製作一個list-column
+tibble_list_col %>% 
+  mutate(new_col = map(1:5, sqrt))
+
+tibble_list_col %>% 
+  mutate(new_col = map(1:5, sqrt)) %>% 
+  # 使用 tidyr::unnest，可以使list-column裡面的每一個element都展開來，各成一列。
+  tidyr::unnest(new_col)
+```
+
+換個例子講，可以把我們剛剛分詞的兩個結果存成list column的形式
+
+```{r eval=FALSE}
+
+tibble(id = 1:2, string = list(result, result_user))
+
+# 但是如果不是用list的形式來儲存，就會產生錯誤。
+tibble(id = 1:2, string = c(result, result_user))
+
+```
+
+將上面學到的東西，實際應用在中文斷詞上，操作如下。
+
+```{r segmetation}
+(hottopic_taiwan <- hottopic::get_topics(country = "Taiwan") %>% 
+        # select也可以當成是重新排列column的功能，
+        # everything()則是全選的意思
+        select(title, news_item_title, everything())
+ )
+
+# 寫法一
+(corpus <- hottopic_taiwan %>%
+  mutate(words = purrr::map(news_item_title, 
+                     # segment 是要執行的function
+                     segment, 
+                     # jiebar 是 segment 裡面的 argument
+                     jiebar = seg_engine)) %>% 
+  select(title, words) %>% 
+  tidyr::unnest(words))
+
+# 寫法二
+(corpus <- hottopic_taiwan %>%
+  mutate(words = purrr::map(news_item_title, 
+                    # . 在這邊代表 news_item_title
+                     ~ segment(., jiebar = seg_engine))) %>% 
+  select(title, words) %>% 
+  tidyr::unnest(words))
+
+# 寫法三
+seg_engine_bylines <- worker(bylines = TRUE) # bylines = TRUE，斷詞的結果會變成list column的格式
+
+(corpus <- hottopic_taiwan %>%
+  mutate(words = segment(news_item_title, 
+                         jiebar = seg_engine_bylines)) %>% 
+  select(title, words) %>% 
+  tidyr::unnest(words))
+
+# 有一些應該新詞或是原斷詞辭典沒有收錄的字，要自己建入使用者辭典，斷詞的準確度才會提升。
+jiebaR::new_user_word(seg_engine_bylines, words = c("臉書", "元宇宙"))
+```
+
+```{r}
+corpus %>% 
+  count(words) %>% 
+  top_n(n = 10, wt = n) %>% 
+  ggplot(aes(x = reorder(words, n), y = n)) + 
+  geom_col() + 
+  coord_flip() + 
+  theme_light() +
+  # 如果用Mac 請加入最後一行，中文顯示才會正常。
+  theme(text = element_text(family = "STHeitiTC-Light"))
+```
+
+
+
+
+
+

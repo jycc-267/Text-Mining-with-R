@@ -1,0 +1,344 @@
+---
+title: "word embedding"
+author: "Mao Wang"
+date: "2021/1/4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r package, message=FALSE}
+library(tidyverse)
+library(tidytext) 
+library(quanteda) # install.packages("quanteda")
+library(jiebaR)
+
+library(wordVectors) # devtools::install_github("bmschmidt/wordVectors")
+library(irlba) # install.packages("irlba") # for svd
+
+## 降維
+library(Rtsne) # install.packages("Rtsne")
+```
+
+## 1. 詞嵌入（word embedding）
+
+"You shall know a word by the company it keeps." (John R. Firth, 1957)
+<br>
+
+詞嵌入的基本概念很簡單，也不是近期才有的概念，但因為需要**大量的語料與運算資源**，直到2013年才由google工程師 [Tomas Mikolov等人](https://arxiv.org/pdf/1301.3781.pdf)提出操作方式，並實際應用在文字探勘上，取得了非常好的效果，也加速了近年來自然語言處理的發展。簡單來說，詞嵌入的做法讓程式語言更理解人類語言中的**相似詞**，而不需要太多的標記資料（如結構樹資料庫treebank）。
+
+## 2. 英文資料
+
+在做詞嵌入前，**基本的資料清理程序還是必須要做的事**，轉換小寫、移除停用詞、數字、標點符號等都不可或缺。
+
+```{r en_data}
+# 用data frame的格式
+# 讀入資料，並做文字資料清理
+trump <- readr::read_lines("data/trumpspeeches.txt") %>% 
+  tibble(text = .) %>% 
+  mutate(id = dplyr::row_number()) %>% 
+  # 不在data frame的格式下移除停用字（現在是在character vector的情況下移除停用字）
+  # 改為小寫
+  mutate(text = str_to_lower(text)) %>% 
+  # 移除停用字
+  mutate(text = tm::removeWords(text, 
+                                tidytext::stop_words$word)) %>% 
+  # 移除數字
+  mutate(text = str_replace_all(text, pattern = "\\d+",
+                                replacement = ""), 
+         # 移除標點符號
+         text = str_replace_all(text, pattern = "[:punct:]", 
+                                replacement = " "),
+         # 移除donald與trump
+         text = str_remove_all(text, pattern = "donald|trump"), 
+         # 移除多餘的空白
+         text = str_squish(text)) %>% 
+  # 欄位重新排序
+  select(id, text)
+
+trump
+
+# 用corpus的格式（quanteda的前處理方式）
+trump_vec <- readr::read_lines("data/trumpspeeches.txt")
+trump_corpus <- corpus(x = trump_vec) %>% 
+  # quanteda有最基本的token()函數，還有其他token開頭的函數系列，輸出都會是tokens object
+  quanteda::tokens(what = "word", 
+                   remove_numbers = TRUE, 
+                   remove_punct = TRUE, 
+                   # padding = TRUE #移除的資料要不要留空位
+                   ) %>% 
+  tokens_tolower() %>% 
+  tokens_remove(pattern = c(tidytext::stop_words$word, "donald", "trump")) #移除停用字
+```
+
+我們之前大多是使用`tidytext`來轉換成`tm`套件裡的document-term matrix（dtm）格式來儲存文字資料，但其實還有另一種矩陣格式也常用來儲存文字資料，尤其是當我們在做詞嵌入時，必須計算每一字詞脈絡前後出現的字詞與數量，這種格式就叫做詞共現矩陣（term co-occurence matrix, tcm），我們使用之前沒介紹過的`quanteda`裡面的`fcm`函式來來達成這項工作。以下是函式的範例。
+
+```{r basic_fcm, eval=FALSE}
+# 這裡不是真的要跑code，只是展示fcm裡可以調控的參數。
+quanteda::fcm(x, 
+    context = c("document", "window"), 
+    count = c("frequency", "boolean", "weighted"), 
+    window = 5L, ordered = FALSE, weights = 1L, tri = TRUE, ...)
+```
+
+在理解「詞共現矩陣」（feature co-occurence matrix, fcm）的基本結構後，將依照我們的需求，做出搜尋每個字前後脈絡詞並計算出現的次數（或有無出現、權重等不同表示）。完成後，再使用奇異值分解的方式降低維度。
+
+```{r en_fcm}
+# 實際做出詞共現矩陣
+trump_fcm <- quanteda::fcm(
+  # x可以是	tokens or dfm object
+  x = quanteda::corpus(trump) %>% tokens(), 
+  # 其實就是 n-gram 的概念，參數有 document (整個文件) 跟 window (限定target word前後字數)
+  context = "window", 
+  count = "frequency", #如何計算詞共現
+  window = 5L, #設定 window 字數
+  ordered = TRUE) # 抓 target word 前面5個字
+
+# sum(trump_fcm) 是看共現矩陣的tokens數，至少需要100萬個才能訓練出比較好的詞嵌入模型
+
+# 中途岔開一下，如果只用fcm的資料，其實也可以做出有點意義的東西
+# 取出 feature frequency 前50大的詞，然後只取出這些字
+feat <- names(quanteda::topfeatures(trump_fcm, 50))
+
+# 只留下前50常出現的詞彙
+trump_fcmat_top <- fcm_keep(trump_fcm, pattern = feat)
+
+dim(trump_fcmat_top)
+
+size <- log(colSums(trump_fcmat_top))
+
+# install.packages("quanteda.textplots")
+# 接著要把共現網絡的詞彙畫出來
+library(quanteda.textplots)
+set.seed(144)
+co_word_plot <- textplot_network(trump_fcmat_top, min_freq = 0.8, 
+                                 vertex_size = size / max(size) * 3)
+
+co_word_plot
+```
+
+```{r}
+# 轉換成矩陣格式
+trump_mat <- as.matrix(trump_fcm)
+
+# 奇異值分解（singular value decomposition, SVD）
+# 降維
+tictoc::tic() # 計算處理時間有多久
+trump_svd <- irlba(trump_mat, 
+                   # 要轉換成多少維度的向量空間（欄位）
+                   nv = 200, maxit = 1e3)
+tictoc::toc()
+beepr::beep(2) #數字不一樣提醒音樂也不一樣
+# ?irlba
+
+# 看看trump_svd裡面有哪些資訊
+names(trump_svd)
+# d 代表奇異值（singular value），v 代表奇異值向量。我們需要的是重組過後的奇異值向量。
+
+# 檢視矩陣的維度（列、欄數）
+dim(trump_svd$u)
+
+# 因為svd矩陣是沒有rownames，把原本的rownames加回去，方便之後計算相似度的語法
+rownames(trump_svd$u) <- rownames(trump_mat)
+
+# 轉換為wordVectors的object，就可以直接用比較簡要的function來算相似性
+# ?wordVectors::as.VectorSpaceModel
+trump_w2v <- wordVectors::as.VectorSpaceModel(trump_svd$u)
+
+```
+
+前置作業都完成了，我們用自己的文本訓練出了自己的詞向量，接下來可以使用你感興趣的詞彙，來找出詞義最相近的詞。
+
+```{r en_consine_similarity}
+# 找語義（semantics）最接近的詞
+trump_w2v %>% wordVectors::closest_to(vector = "tariff", n = 15)
+
+# 如同向量一樣，也可以做加減
+trump_w2v %>% wordVectors::closest_to(~ "tariff" - "mexico", n = 15)
+trump_w2v %>% wordVectors::closest_to(~ "tariff" + "mexico", n = 15)
+
+trump_w2v %>% wordVectors::closest_to(~ "tariff" - "china", n = 15)
+trump_w2v %>% wordVectors::closest_to(~ "tariff" + "china", n = 15)
+
+trump_w2v %>% wordVectors::closest_to(vector = "hillary", n = 15)
+
+```
+
+上面的呈現方式比較適合針對單一詞彙搜尋，若是想要看整體的情況，則可以再將資料降維，畫在平面上，更可以看出哪些詞與哪些詞的詞義接近。我們使用的是t-SNE（t-distributed stochastic neighbor embedding）的方式，這種方式不同於主成分分析（PCA）的線性降維，是非線性降維。當資料不適合以線性關係轉換時，用t-SNE會比較好。如果對這種方法有興趣，可以參考 [此連結](https://medium.com/d-d-mag/%E6%B7%BA%E8%AB%87%E5%85%A9%E7%A8%AE%E9%99%8D%E7%B6%AD%E6%96%B9%E6%B3%95-pca-%E8%88%87-t-sne-d4254916925b)
+
+```{r en_plot}
+# 畫出wordVectors提供的預設圖
+set.seed(5691)
+plot_1 <- plot(trump_w2v, perplexity = 30) 
+# 預設是只畫前300個詞。
+# ?wordVectors::`plot,VectorSpaceModel-method`
+
+# TSNE 降成二維
+# 若不想使用預設的方式，也可以自行算出降維的座標後再畫出
+tsne <- Rtsne(
+              # 只取前150個字來畫
+              trump_svd$u[1:150, ], 
+              # 複雜度越小，分群會越明顯，但可能會降低詞義的一致性
+              perplexity = 5, 
+              check_duplicates = FALSE)
+names(tsne) # 我們需要的是Y裡面提供的座標軸
+
+# 將座標資料取出，改用ggplot2畫。
+library(ggrepel) ## install.packages("ggrepel")
+tsne_plot <- tsne$Y %>%
+  as_tibble() %>%
+  mutate(word = rownames(trump_svd$u)[1:150]) %>%
+  ggplot(aes(x = V1, y = V2)) + 
+  # geom_text(aes(label = word), size = 3.5) + 
+  geom_text_repel(aes(label = word), size = 3.5) +
+  theme_bw()
+tsne_plot
+
+# 只取出部分詞語來畫圖
+tariff <- trump_w2v %>%
+  closest_to(.[[c("tariff","china","mexico")]], 100)
+
+tariff_res <- trump_w2v[[tariff$word, average = FALSE]]
+plot(tariff_res, method = "tsne")
+```
+
+看看畫出來的圖，越接近的詞代表在**所使用的語料中詞義越接近**，是否符合你的預期呢？
+<br>
+想知道更多`wordVectors`的功能，可以參考套件作者寫的 [簡要教學](https://github.com/bmschmidt/wordVectors/blob/master/vignettes/introduction.Rmd)
+
+# 練習1
+
+試試看填入你有興趣的詞彙，找出詞義最相近的詞。
+
+```{r practice_1, eval=FALSE}
+trump_w2v %>% wordVectors::closest_to(vector = "", n = 15)
+```
+
+## 3. 中文資料
+
+接下來我們用中文資料試試看。
+
+```{r zh_data}
+news <- readr::read_rds("data/news_df.rds") %>% 
+  select(news_id, content, source)
+glimpse(news)
+```
+
+雖然中文資料與英文資料不同，但還是有斷詞與基本的資料清理必須要先做。
+
+```{r zh_prep}
+seg_engine <- worker(bylines = TRUE)
+
+zh_stopwords <- stopwords::stopwords(language = "zh", source = "misc")
+
+news_token <- news %>% 
+  # 斷詞
+  mutate(token = segment(content, seg_engine)) %>% 
+  select(-content) %>% 
+  # 這步比較特別，不需要unnest()，因為要維持只有一個vector包含多個中文詞，並且每個中文詞都以一個空白隔開的格式，所以這樣處理。這樣就可以直接丟進fcm。
+  mutate(token = map_chr(token, ~paste(.x, collapse = " "))) %>% 
+  # 將中文停用詞移除，因為不是每個詞都存在一個觀察值內，所以不是用anti_join的方式移除。
+  mutate(token = tm::removeWords(token, zh_stopwords)) %>% 
+  select(news_id, token, source)
+```
+
+基本的資料清理完成，接下來的流程完全與英文部分的方式一樣。不過需要考慮中文與英文使用上的不同，在形成`fcm`時是否需要調整參數，如計算脈絡詞的window size是否要增大。
+
+```{r zh_fcm}
+# 如果 input 是 dataframe，要指定 df 的 id 跟 text 分別是屬於哪個 column
+news_toks <- quanteda::corpus(news_token, docid_field = "news_id", 
+                       text_field = "token") %>% 
+  tokens() %>% 
+  # 只留下長度大於2的詞彙
+  # 因為很多詞會因為長度小於2而被刪除，位置會因此而被縮小，所以設定padding，讓被移除字的位置留空。
+  tokens_select(min_nchar = 2, 
+                padding = TRUE)
+
+# 實際做出詞共現矩陣
+news_fcm <- quanteda::fcm(
+  # x可以是	tokens or dfm object
+  x = news_toks,
+  context = "window", 
+  count = "weighted", 
+  window = 6L, 
+  ordered = FALSE,
+  span_sentence = TRUE)
+```
+
+
+```{r}
+# 轉換成矩陣格式（是否一定要執行？）
+news_mat <- as.matrix(news_fcm)
+
+# 奇異值分解（singular value decomposition, SVD）
+# 降維
+tictoc::tic()
+news_svd <- irlba(news_mat, 
+                   # 要轉換成多少維度的向量空間（欄位）
+                   nv = 200, maxit = 1e3)
+tictoc::toc()
+beepr::beep(2) # 增加提醒聲音，表示工作完成了
+
+# 看看trump_svd裡面有哪些資訊
+names(news_svd)
+# d 代表奇異值（singular value），v 代表奇異值向量。我們需要的是重組過後的奇異值向量。
+
+# 檢視矩陣的維度（列、欄數）
+dim(news_svd$u)
+
+# 因為svd矩陣是沒有rownames，把原本的rownames加回去，方便之後計算相似度的語法
+rownames(news_svd$u) <- rownames(news_mat)
+
+# 轉換為wordVectors的object，就可以直接用比較簡要的function來算相似性
+news_w2v <- wordVectors::as.VectorSpaceModel(news_svd$u)
+```
+
+我們同樣可以使用向量的概念加以運算，算出在現有語料中，哪些詞語在現有200維空間中的意思最接近。
+
+```{r zh_cosine_similarity}
+# 找語義（semantics）最接近的詞
+news_w2v %>% closest_to("公務人員", 15)
+
+# 如同向量一樣，也可以做加減
+news_w2v %>% closest_to(~ "公務人員" - "考試", 15)
+news_w2v %>% closest_to(~ "公務人員" + "考試", 15)
+
+news_w2v %>% closest_to(~ "貪污", 15)
+```
+
+我們同樣使用`wordVectors`的預設畫圖方式來看看。
+
+```{r zh_plot}
+# 中文資料一樣可以像英文資料的程式碼自行製作t-SNE的座標軸出來，再用ggplot2的方式畫出。
+tsne_news <- Rtsne(
+              # 只取前300個字來畫
+              news_svd$u[1:300, ], 
+              # 複雜度越小，分群會越明顯，但可能會降低詞義的一致性
+              perplexity = 40, 
+              check_duplicates = FALSE)
+
+(tsne_plot_news <- tsne_news$Y %>%
+  as_tibble() %>%
+  mutate(word = rownames(news_svd$u)[1:300]) %>%
+  ggplot(aes(x = V1, y = V2)) + 
+  geom_text(aes(label = word), size = 3.5, family="STHeitiTC-Medium")+
+  theme(text = element_text(family = "STHeitiTC-Medium"))+
+  labs(x="向量1", y = "向量2", title="word2vec中文資料")
+)
+```
+
+也許目前看來詞嵌入的模型結果並不是讓人十分滿意，但請記得這個方法適用的條件：巨量語料（至少100萬以上tokens）。因為我們現在使用的語料相對都比較小，並且也沒有花太多工夫好好清理資料，所以效果不會太好是可以預見的。詞嵌入算是繼續鑽研文字探勘的基本功夫，也是邁向進階分析方法不可或缺的觀念，請有心繼續鑽研的同學務必理解詞嵌入的概念。
+
+## bonus 向量空間教學系列影片
+
+[vector](https://www.youtube.com/watch?v=fNk_zzaMoSs&list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab&index=1)的教學影片（有中文字幕），**非常推薦觀看**，幫助你更瞭解在多維空間下的向量意涵。
+
+[其他教學資源](https://cbail.github.io/textasdata/word2vec/rmarkdown/word2vec.html)
+
+## bonus 其他套件：text2vec
+
+[text2vec](http://text2vec.org/)也是很多人會使用的詞嵌入套件，但因為非使用tidyverse邏輯，且操作方式比較特別，所以沒多做介紹。若處理的是英文資料，此套件有詳細的說明文件，照著操作應該還是可以做出成果。
+
+[conText](https://cran.r-project.org/web/packages/conText/vignettes/quickstart.html)近期推出的新套件，特點在於可以結合pre-trained的資料，做embedding regression。

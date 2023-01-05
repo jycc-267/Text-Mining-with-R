@@ -1,0 +1,355 @@
+---
+title: "webscraping"
+author: "Mao Wang"
+date: "2021/11/23"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r message=FALSE}
+library(tidyverse)
+library(rvest) # 爬取資料用
+library(polite) # install.packages("polite")
+library(glue) # 文字資料處理，進階版的paste # 應該安裝好tidyverse就已經包含其中了。
+```
+
+## 1. 為什麼要爬資料（爬蟲）？
+
+我們之前有介紹過很多其他取得資料的方法（現有資料、API等），請記得，如果有其他更容易的方法，請不要貿然使用爬蟲。此外，**要特別注意，有些網站會禁止爬取資料**，如果違反對方網站使用規範，可能會需要擔負法律責任或是連帶影響學校被阻隔IP。
+
+所以在使用爬蟲前，請注意網站頁面底端的「網站資料開放宣告」（Terms of Use），是否有禁止爬取資料的規定。我們以 [審計部](https://www.audit.gov.tw/p/405-1000-895,c166.php)的網站為例，其中提到「為利各界廣為利用網站資料，本部網站上刊載之所有資料與素材，其得受著作權保護之範圍，以無償、非專屬，得再授權之方式提供公眾使用……；然使用時，應註明出處。」除了檢視網站說明外，也可以用程式來協助判斷，如 [polite](https://github.com/dmi3kno/polite)，我們以審計部「新聞發布」頁面資料為例做示範。
+
+```{r bow}
+# ?bow
+## 審計部新聞發布網址
+session <- polite::bow("https://www.audit.gov.tw/p/412-1000-104.php?Lang=zh-tw", force = TRUE, verbose = TRUE)
+session
+```
+
+簡單來說，為什麼要爬資料？主要原因就是**沒有其他可以獲得該筆資料的管道**，或是**獲得的方式遠比爬蟲更麻煩**！
+
+## 2. 爬蟲的基本步驟
+
+1. 先想清楚你要爬什麼資料；
+2. 理清網頁規則：你要的資料在網頁的什麼位置；
+3. 希望爬蟲後得到的資料格式。
+
+```{r basic}
+## 審計部新聞發布網址
+path <- "https://www.audit.gov.tw/p/412-1000-104.php?Lang=zh-tw"
+
+scraped_date <- 
+        # 要爬取的網頁網址
+        xml2::read_html(path) %>% 
+        # 挑選網頁中要擷取的資料位置
+        rvest::html_elements(css = ".before") %>% 
+        # 將該位置的文字資料讀出
+        rvest::html_text()
+
+scraped_date
+```
+
+只需要幾行程式碼，就能快速的取得網頁資料，但問題是：「要怎麼知道我要的資料存在網頁的哪個位置？」如果你有 html 語言的基本知識，對於你找到位置絕對會有很大的幫助。如果你不會 html 也別擔心，有 [SelectorGadget](https://selectorgadget.com/) 幫助我們！這是瀏覽器的一個外掛元件，必須先安裝到你的瀏覽器（限Chrome），或是將該網頁下方的「drag this link to your bookmark bar: SelectorGadget」加到你的最愛或書籤，即可使用。
+
+## 3. 開始爬蟲
+
+實際上在爬取資料時，一個網頁頁面可能同時有多個資訊要擷取，不會像上述只爬取新聞發布的「日期」，通常會同時盡可能爬取可以用來分析的資料，如「文章標題」、「文章連結」等等。這時候會分別將其抓取後，再併入一個data frame之中。
+
+```{r webpage_df}
+
+# 抓取日期
+scraped_date <- xml2::read_html(path) %>% 
+        # 請用SelectorGadget找尋日期位置
+        rvest::html_elements(css = ".before") %>% 
+        rvest::html_text()
+
+# 但如果真的無法剛好點選到你要爬取的部分，也是可以先多抓一部分，再用文字資料前處理的方法提取出來。
+  # xml2::read_html(path) %>%
+  #       # 請用SelectorGadget找尋日期位置，但發現非常難選取。於是將日期與標題的部分都選取。
+  #       rvest::html_nodes(css = ".col-sm-12") %>%
+  #       rvest::html_text() %>%
+  #       str_squish() %>% # 把空格跟換行符號去掉
+  #       str_extract(pattern = "\\d{4}-\\d{2}-\\d{2}") # 日期通常都放在最前面，不用用到str_extract_all
+
+# 抓取文章標題
+scraped_title <- xml2::read_html(path) %>% 
+        # 請用SelectorGadget找尋標題位置
+        html_elements(css = "#pageptlist a") %>% 
+        html_text()
+
+# 合併成一個data frame，方便後續使用
+(scraped_page <- tibble(date = scraped_date, 
+                       title = scraped_title) %>% 
+        mutate(title = str_squish(title))) # 將一些換列\n\t的資料刪掉
+```
+
+在整理好基本資料後，可以發現點選各新聞標題本身，還有一個全文的頁面，這個才是實際新聞公告全文的所在。接下來要做的，就是先將這些「網頁連結」抓取下來。跟剛剛的做法很像，只是現在要找的是在該網頁位置（#pageptlist a）的屬性資料，而不是標題文字，所以使用`html_attr()`（屬性）而非`html_text()`。另外要講清楚屬性資料叫什麼名稱（name），這時候要擷取的是`"href"`，
+
+```{r fulltext_link}
+scraped_link <- xml2::read_html(path) %>% 
+        # 請用SelectorGadget找尋標題位置
+        rvest::html_elements(css = "#pageptlist a") %>% 
+        # 抓取該位置的屬性資料，屬性名稱叫做"href"
+        rvest::html_attr(name = "href")
+```
+
+知道全文網址後，重複前面擷取標題及日期的方法，只是現在放到for loop裡面，因為有好多頁面連結要處理。
+
+```{r fulltext}
+# 先製作一個空的容器（container）（文字型的向量容器），之後存放抓取的資料
+content <- vector(mode = "character", # 放list比較安全，能應付長度不一、類別多樣的資料
+                  length = length(scraped_link))
+
+# 使用for loop幫助我們處理多個頁面的資料爬取
+for(i in 1:length(scraped_link)){
+        content[i] <- 
+                xml2::read_html(scraped_link[i]) %>% 
+                rvest::html_elements(css = ".mpgdetail") %>%
+                rvest::html_text() %>% 
+                # 將一些換列\n\t的資料刪掉
+                str_squish()
+        # 停一下，免得大量爬取該網站，造成對方伺服器癱瘓
+        # Sys.sleep(time = runif(n = 1, min = 1, max = 2)) # 隨機選取1-2秒的值當成停頓時間
+}
+
+# 檢視一下剛剛爬取回來的資料
+head(content)
+
+# 併入原先的data frame之中，變成一個新的欄位。
+scraped_page <- scraped_page %>% 
+        mutate(text = content)
+# View(scraped_page)
+```
+
+但for loop如果遇到中間有問題的網頁或是抓取失敗的結果，就會中斷。所以建議可以使用別的彈性比較大的方法，例如寫成 function 中，再使用`purrr::possibly`轉換function；或是使用 if 做程序控制，使抓取失敗的資料不會中斷整個程序。注意：這個部分比較進階，請至少把前面for loop的寫法學會；當然也可以在for loop中寫下若抓取失敗如何處理，但可能對初學者會較為困難。
+
+```{r scrape_func}
+# 將前面的for loop寫進function中。
+scrape_fulltext <- function(url){
+        content <- 
+                xml2::read_html(url) %>% 
+                rvest::html_elements(css = ".mpgdetail") %>%
+                rvest::html_text() %>% 
+                # 將一些換列\n\t的資料刪掉
+                str_squish()
+        # 寫出這個function要回傳的object，要不然預設是最後處理的object。
+        return(content)
+}
+
+# 將原本的function使用purrr::possibly轉換，若抓取出現錯誤，則顯示為otherwise的值。
+scrapely <- purrr::possibly(scrape_fulltext, otherwise = "no data")
+
+# 當然可以一個一個抓取，或是再放回for loop，但這樣寫有點沒效率，需要多寫整個loop。
+scrapely(scraped_link[1])
+
+# 使用之前用過的purrr::map，可以快速幫我們全部處理好。map會將結果以list的方式回傳，map_chr則是以文字的vector回傳。
+fulltext <- map_chr(scraped_link, scrapely)
+head(fulltext)
+
+# 製作一個假的網站，測試看看scrapely有沒有正常運作
+faketext <- map_chr(c(scraped_link[1], "test.html"), scrapely)
+head(faketext)
+```
+
+## 練習
+
+觀察一下網頁資料，如果要抓取「報告全文」連結，css處要填入什麼？試著抓取看看。
+
+```{r report_link, eval=FALSE}
+# 1. 請找出報告全文的連結位置，放入html_elements裡的css中。
+scrape_report_link <- function(url){
+        report_link <- 
+                xml2::read_html(url) %>% 
+                # 抓取報告連結位置
+                rvest::html_elements(css = ".mptattach a") %>% 
+                rvest::html_attr(name = "href") %>% 
+                # 將一些換列\n\t的資料刪掉
+                str_squish()
+        # 寫出這個function要回傳的object，要不然預設是最後處理的object。
+        return(report_link)
+}
+
+test_path <- c("https://www.audit.gov.tw/p/405-1000-5571,c104.php?Lang=zh-tw", "https://www.audit.gov.tw/p/405-1000-5602,c104.php?Lang=zh-tw", "https://www.audit.gov.tw/p/405-1000-5615,c104.php?Lang=zh-tw")
+# 第一個沒有附檔、第二個與第三個都有附檔、
+
+# 2. 測試是否成功擷取網址。
+scrape_report_link(test_path)
+
+# 3. 試試看test_path[2]是否成功。
+# scrape_report_link 有在運作，只是test_path的長度是3，這個函數只能丟長度為1的input。
+scrape_report_link(test_path[2])
+
+# 4. 如果不成功，想想發生了什麼問題？該怎麼處理？(hint: 使用for loop或是purrr::map)
+
+
+
+# 5. 讓我們試試看加入一個假的網址來抓取看看，並用迴圈與函式的做法來檢視差異。
+fake_link <- c(test_path, paste0(test_path[1], "111"))
+
+# for loop
+res_list_loop <- vector("list", length(fake_link))
+
+for(i in seq_along(fake_link)) {
+        res_list_loop <- scrape_report_link(fake_link[i])
+} # 如果讀不到網址，還是會產生錯誤訊息。
+
+# map (functional programming)
+res_list_mapway <- map(fake_link, scrape_report_link) # 因為function的本質沒變，讀不到時還是會產生錯誤。
+
+# function with "possibly" mechanism
+scrapely2 <- purrr::possibly(scrape_report_link, otherwise = "no data")
+
+# 因為 possibly 會讓出現 error 的地方自動轉換成 "no data"，而不是中斷執行程序。但因為抓回來空的資料，不代表執行錯誤，所以不會回傳 "no data"
+(res_list_map <- map(fake_link, scrapely2))
+
+# 可以發現，如果使用for loop，在產生錯誤時會造成for loop執行錯誤，而中止執行，但如果使用purrr::possibly搭配function的寫法，則可以避免這樣的問題。
+
+## 注意：抓回來的全文連結網址並不是完整的報告位置，需加上審計部網址
+base_path <- "https://www.audit.gov.tw"
+
+report <- tibble(id = 1:length(res_list_map), 
+       report_link = res_list_map) %>% 
+  tidyr::unnest(report_link) %>% 
+  filter(report_link != "no data") %>% 
+  mutate(report_link = paste0(base_path, report_link))
+
+# 執行下面的code就可以將檔案下載到目前的工作目錄
+# download.file(report$report_link, destfile = glue::glue("{report$id}.pdf"))
+```
+
+上面練習的css為".mptattach a"
+
+## 4. 爬取多個網頁資料
+
+最基本的爬蟲邏輯是：
+1. 先想清楚你要爬什麼資料；
+2. 理清網頁規則：你要的資料在網頁的什麼位置；
+3. 希望爬蟲後得到的資料格式。
+
+但如果今天是要爬取多個頁面，則需要在第2步之前，理清所有你要爬取的「網址規則」，簡單來說，就是各個網址是怎麼組成的。我們一樣以審計部的新聞發布，先觀察第一頁跟第二頁的差異。
+
+```{r full_index}
+# 觀察第一頁與第二頁網址的差異處
+page1 <- "https://www.audit.gov.tw/p/412-1000-104-1.php?Lang=zh-tw"
+page2 <- "https://www.audit.gov.tw/p/412-1000-104-2.php?Lang=zh-tw"
+
+# 總共有13頁，可以很快的依照這個原則建立13頁網址清單，但為了節省時間，我們以3頁做示範。
+pages <- 1:3
+full_index <- glue::glue("https://www.audit.gov.tw/p/412-1000-104-{pages}.php?Lang=zh-tw")
+```
+
+在知道所有要爬取的頁面後，我們可以利用前面學到的內容，試著把前三頁的資料都抓下來。
+
+```{r multiple_pages}
+# 這裡是之前的例子。
+# path <- "https://www.audit.gov.tw/p/412-1000-104.php?Lang=zh-tw"
+# 
+# scraped_date <- 
+#         # 要爬取的網頁網址
+#         xml2::read_html(path) %>% 
+#         # 挑選網頁中要擷取的資料位置
+#         rvest::html_elements(css = ".before") %>% 
+#         # 將該位置的文字資料讀出
+#         rvest::html_text()
+
+# path放入read_html讀取，只有讀取一個頁面，現在有3個頁面要讀取。當然一樣可以使用for loop的方式來達成。
+
+css_title <- "#pageptlist a"
+css_date <- ".before"
+css_link <- "#pageptlist a"
+css_fulltext <- ".mpgdetail"
+
+# 先製作一個空的tibble object
+data_all <- tibble()
+
+# 開始一頁一頁爬取資料
+for(page in full_index){
+        base <- xml2::read_html(page)
+        # 將各自要抓取的資料存成vector，再整併成data frame
+        title <- base %>% html_elements(css = css_title) %>% 
+                html_text() %>% 
+                str_squish()
+        date <- base %>% html_elements(css = css_date) %>% 
+                html_text()
+        link <- base %>% html_elements(css = css_link) %>% 
+                html_attr(name = "href") %>% 
+                str_squish()
+
+        data_this <- tibble(title = title, date = date, link = link)
+        
+        data_all <- bind_rows(data_all, data_this)
+        Sys.sleep(time = runif(n = 1, min = 1, max = 2))
+}
+
+# 再利用剛剛取得的內文連結爬取全文。
+fulltext <- vector(mode = "character", length = nrow(data_all))
+
+for(i in seq_along(data_all$link)){
+        fulltext[i] <- read_html(data_all$link[i]) %>% 
+                html_elements(css = css_fulltext) %>% 
+                html_text() %>% 
+                str_squish()
+        Sys.sleep(time = runif(n = 1, min = 1, max = 2))
+}
+beepr::beep(2)
+
+# 併入原先的data_all，成為新的一欄
+data_all <- data_all %>% mutate(fulltext = fulltext)
+
+# View(data_all)
+```
+
+剛剛完成的爬取資料，只需要更改要爬取的頁數，就可以將全部的審計部新聞公告抓下來分析。當然，也可以做成function的方式，來爬取資料。
+
+## 5. 爬須認證網站
+
+有時候你爬取的網站可能會需要點選認證，如已滿18歲才可進入ptt八卦版，如果遇到這樣的網站要如何爬取呢？
+
+```{r form}
+gossiping <- "https://www.ptt.cc/bbs/Gossiping/index.html"
+
+# 先來試試原本的方法讀的到資料嗎？
+result <- read_html(gossiping) %>% 
+        html_elements(css = ".title a") %>% 
+        html_text()
+result
+
+# 因為要先回答已滿18歲的問題，所以抓取不到資料，那換種方法。
+# 建立一個互動對話連結
+session <- session(gossiping) 
+
+# 檢視表單
+(required_form <- session %>% 
+        # 提取表單
+        html_form() %>% 
+        .[[1]]
+)
+
+# 送交表單後爬取資料
+session %>% 
+        # 送交表單
+        rvest::session_submit(form = required_form, submit = "yes") %>% 
+        html_elements(css = ".title a") %>% 
+        html_text()
+```
+
+用原先的方法無法抓取資料，但是使用`session`與`session_submit`，並輸入正確的參數後，所有的資料也可以像之前一樣爬取了。因為後續操作步驟相同，這邊就不再重複說明了。
+
+## 練習
+
+試著將剛剛抓下來的審計部新聞公告（data）進行斷詞與初步分析，哪些字或是哪些事項是審計部比較關心的？請畫成文字頻率圖的形式呈現看看（geom_col）。
+
+```{r practice, eval=FALSE}
+
+```
+
+## 6. 延伸閱讀
+
+網路上有很多爬蟲的相關文章與程式碼，可以參考 [r-crawler](https://yaojenkuo.io/r-crawler/)、 [爬蟲練習](https://yaojenkuo.io/r-crawler/chapter08.slides.html#/)與 [Practical Introduction to Web Scraping in R](https://blog.rsquaredacademy.com/web-scraping/)

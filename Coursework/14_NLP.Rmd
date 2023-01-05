@@ -1,0 +1,343 @@
+---
+title: "NLP"
+author: "Mao Wang"
+date: "2021/12/28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r package, message=FALSE}
+library(tidyverse)
+library(tidytext)
+
+library(SnowballC) # install.packages("SnowballC") # for stemming
+library(udpipe) # install.packages("udpipe")
+library(jiebaR)
+
+# Mac畫圖設定中文字型
+# my_theme <- theme_bw() + 
+  # theme(text = element_text(family = "STHeitiTC-Light"))
+# theme_set(my_theme)
+```
+
+## 1. 自然語言處理是什麼？
+
+自然語言處理（Natural Language Processing, NLP）是透過程式語言來分析、理解、生成自然語言（人類用語）的一門學問。其應用範圍非常廣泛，舉凡如詞性標記、專有名詞辨識（named entity recognition, NER）、句法分析與聊天機器人等，都是自然語言處理的領域。**自然語言處理的效果良莠與否，與情緒分析一樣有賴於標記（annotate）資料的基礎建設**。
+
+## 2. 詞幹提取（stemming）
+
+首先，我們先從最基本的詞幹提取下手。詞幹提取顧名思義就是將文字的詞幹提取出來，所以詞幹常不會是一個完整的字，也有人認為詞幹提取其實也就是對文字資料進行降維（dimension reduction）。簡言之，原本許多相似的字，當轉換為dtm（document-term matrix）時，因為每個字仍是有差異，故會在不同欄位呈現。但當經過詞幹提取後，許多原本近似的字，就會簡化成同樣的詞幹，減少了許多欄位，可是仍保留一定的資料特徵。在用 NLP 做 ML 時，由於大多資料量龐大，Stemming 多成為其中的必經程序。以下我們就直接來看看例子。
+
+```{r stemming}
+# 可以使用的詞幹提取語言
+SnowballC::getStemLanguages()
+
+# 先建立一個相似字的vector
+love_vec <- c("love", "loving", "lovingly", "loved", "lover", "lovely")
+
+# 用data frame的方式來呈現轉換前後的差異
+(love_stem_df <- tibble(origin = love_vec, 
+       stem = SnowballC::wordStem(words = love_vec)))
+```
+
+原本是6個不同的相近字，在經過詞幹提取後，只剩下3種不同的詞幹，在轉換為dtm時，大幅減少資料欄位，使後續的各項計算更有效率；但相對地，在此種降維的過程中，會捨去一些資料的變異量。當資料非常大量時，詞幹提取幾乎已經是文字資料前處理的一項必備的標準步驟。接下來我們用Trump演說的資料來進行詞幹提取。
+
+```{r trump_speech_stem}
+# 將文字檔讀入，並轉換為data frame的格式來進行處理
+trump_speech <- readr::read_lines("data/trumpspeeches.txt") %>%
+        # 那個.代表將 %>% 前面的object放置在這個位置。
+        tibble(text = .) %>% 
+        mutate(id = row_number())
+
+trump_token <- trump_speech %>% 
+        tidytext::unnest_tokens(input = text, output = word)
+
+# 沒有詞幹提取，直接轉換成dtm [56, 10097]
+trump_token %>% 
+        count(id, word) %>% 
+        tidytext::cast_dtm(document = id, term = word, value = n)
+
+# 經由詞幹提取，再轉換為dtm [56, 7878]
+trump_token %>% 
+        mutate(word = SnowballC::wordStem(word)) %>% 
+        count(id, word) %>% 
+        tidytext::cast_dtm(document = id, term = word, value = n)
+```
+
+可以看到term的欄位減少了至少1/5，對於要再將dtm繼續分析的各種文字模型而言，運算效率無疑是會提升，但犧牲的則是辭義的準確度，故亦有研究者（如tidytext作者）建議，諸如是跑主題模型時，是不用在前處理階段進行詞幹提取。（**但目前並無共識**）
+
+## 3. 詞形還原（lemmatization）
+
+誠如詞幹提取會喪失比較多的資訊量，而且完全丟棄了同詞幹但不同詞形的資訊，故另外有種方法是詞形還原，既可保留部分資訊，又可將資料進行簡化。但因為這涉及需要比較多的語料才能判斷，所以需要專門處理自然語言處理的套件。
+
+<br>
+
+我們這次主要會用到的套件是`udpipe`，UD是指Universal Dependencies，為的是建立一套全球語言共用的依存句法標示語料庫，以便於跨語言也能使用一致的語法標記，詳細資料請參見 [Universal Dependencies資料庫](https://universaldependencies.org/#download)。該資料庫目前已包括122種語言與217種 [結構樹資料庫](https://universaldependencies.org/introduction.html)（treebanks），光是英文就包含了12種結構樹資料庫，可依你要分析的資料來源選用不同的結構數資料庫。
+
+```{r udpipe_prep}
+# 選擇你要分析的語言，下載已經標記好的資料
+# ?udpipe_download_model
+eng_model_data <- udpipe_download_model(language = "english-gum")
+names(eng_model_data)
+class(eng_model_data)
+typeof(eng_model_data) # 資料底層
+
+# 其實這只是一個檔案路徑（用來顯示檔案下載後儲存的路徑）
+eng_model_data$file_model
+
+# 讀取下載的語言資料檔
+eng_model_gum <- udpipe_load_model(eng_model_data$file_model)
+# 如果已經下載過語言資料，可以直接執行讀取資料就好
+# eng_model_gum <- udpipe::udpipe_load_model(file = "english-gum-ud-2.5-191206.udpipe")
+```
+
+因為詞形還原涉及前後文的判斷才能作到，故先前用的`love_vec`在這邊沒有辦法呈現詞形還原的效果。我們將續用Trump演講的資料來演練。
+
+```{r trump_lemma}
+# 進行各種標記，包括詞形還原（語法簡單，但要花較多時間運算）
+# ?udpipe_annotate
+# 因為標註時間較長，只用前10筆資料演示
+trump_anno_gum <- udpipe_annotate(eng_model_gum, 
+                              # x需要輸入df裡面的一個欄位
+                              x = trump_speech$text[1:10], 
+                              doc_id = trump_speech$id[1:10], 
+                              # 顯示進度
+                              trace = TRUE)
+typeof(trump_anno_gum)
+names(trump_anno_gum)
+
+# trump_anno是一個list物件，將其轉成data frame
+(trump_anno_df_gum <- as_tibble(trump_anno_gum))
+
+# 比較一下token數與lemma數
+trump_anno_df_gum %>% 
+        summarize(
+                token_n = dplyr::n_distinct(token),
+                lemma_n = dplyr::n_distinct(lemma))
+
+# 來看看高頻的動詞都怎麼還原
+trump_anno_df_gum %>% 
+        filter(upos == "VERB") %>% 
+        count(token, lemma, sort = TRUE)
+```
+
+詞形還原會還原語境脈絡下的詞形，如**因時態、單複數、變形（比較級、最高級）等因素而改變的字**。
+
+## 4. 詞性標記
+
+因為中文語料不需要考慮詞幹提取與詞形還原，所以剛剛都只有介紹英文語料的處理方式，接下來要做的詞性標記，則英文、中文語料都可以處理，我們將用到剛剛介紹的`udpipe`與之前介紹過的`jiebaR`，來完成這項工作。
+
+### 4.1 英文詞性標記
+
+每種不同的標記方式都會有不同的代碼來表示詞性，有興趣的同學可以參考 [Universal POS tags](https://universaldependencies.org/u/pos/all.html#universal-pos-tags)，找出你有興趣要分析的詞性代碼。其實剛剛在做`udpipe_annotate`時，就一併把詞性也標記好了，所以我們才能篩選出動詞詞形還原前與後的比較。接下來來看看詞性標記還有什麼應用。
+
+```{r}
+# Trump喜歡說哪種詞性的字
+trump_anno_df_gum %>% 
+        count(upos, sort = TRUE) %>% 
+        mutate(total = sum(n), 
+               perc = n / total, 
+               total = NULL)
+
+
+# 有助於辨識出更多的特定字詞(看需要加入斷詞字典)
+# 接連出現的名詞與形容詞
+# ?udpipe::cooccurrence
+cooc <- udpipe::cooccurrence(
+        # 詞形還原後的lemma當成輸入資料
+        trump_anno_df_gum$lemma, 
+        # 限定詞性為名詞與形容詞
+        relevant = trump_anno_df_gum$upos %in% c("NOUN", "ADJ"), 
+        # skipgram代表前後相鄰字的範圍（window）
+        skipgram = 1)
+
+head(cooc, 10)
+```
+
+## 練習一
+
+請試試下載不同的英文結構樹資料庫，看看Trump常講的動詞有沒有差異？
+
+```{r practice_1, eval=FALSE}
+eng_model_data <- udpipe_download_model(language = "english-lines")
+
+# 讀取下載的語言資料檔
+eng_model <- udpipe_load_model(eng_model_data$file_model)
+
+trump_anno <- udpipe_annotate(eng_model, 
+                              x = trump_speech$text[1:10], 
+                              doc_id = trump_speech$id[1:10], 
+                              trace = TRUE)
+
+# trump_anno是一個list物件，將其轉成data frame
+(trump_anno_df <- as_tibble(trump_anno))
+
+# 比較一下token數與lemma數
+trump_anno_df %>% 
+        summarize(
+                token_n = n_distinct(token),
+                lemma_n = n_distinct(lemma))
+
+trump_anno_df_gum %>% 
+        summarize(
+                token_n = n_distinct(token),
+                lemma_n = n_distinct(lemma))
+
+# 來看看高頻的動詞都怎麼還原
+trump_anno_df %>% 
+        filter(upos == "VERB") %>% 
+        count(token, lemma, sort = TRUE)
+
+# 比較先前使用不同treebank的結果
+trump_anno_df_gum %>% 
+        filter(upos == "VERB") %>% 
+        count(token, lemma, sort = TRUE)
+```
+
+### 4.2 中文詞性標記
+
+中文詞性標記的方法，其實在斷詞時就可以一併完成，先用簡單的例子讓大家瞭解是怎麼進行的，首先我們用jiebaR來做詞性標記。
+
+```{r toy}
+# 建立斷詞引擎，但需附加詞性標註功能
+seg_engine_tag <- jiebaR::worker(bylines = TRUE, type = "tag") # tag 就是在做詞性標記
+
+# 先從簡單的vector格式來試試
+toy_vec <- c("我很難過", "我家門前有條水溝很難過")
+toy_result <- segment(toy_vec, jiebar = seg_engine_tag) # list 裡面包 name vector
+map(toy_result, names) # 取出 name
+
+# 回到我們最常使用的data frame格式來操作
+toyexample <- tibble(sentence = c("我很難過", "我家門前有條水溝很難過"))
+
+(toy_example_tag <- toyexample %>% 
+        mutate(token = segment(sentence, jieba = seg_engine_tag), 
+               pos = map(token, names)) %>% 
+        unnest(c(token, pos))
+)
+```
+
+做法上與斷詞非常雷同，只是要在斷詞引擎上另外加上`type = "tag"`的功能。後續的操作十分相似，差異點在於此時list column除了是斷詞結果的vector，其vector還是有名字屬性（named vector，這邊是指詞性）。詳細的詞性代碼，可以參考 [此連結](https://gist.github.com/hankcs/d7dbe79dde3f85b423e4)。接下來我們運用審計部新聞發布資料，實際來看標註後的資料是什麼樣子。
+
+```{r nao_jieba_tag}
+# 讀入資料，並將審計部資料轉為nao
+load("data/nao.RData")
+nao <- data_all
+glimpse(nao)
+
+# 進行斷詞， 
+(nao_tag <- nao %>% 
+        mutate(id = row_number(), 
+               # 斷詞方式與之前教的做法一樣。
+               token = segment(fulltext, jieba = seg_engine_tag), 
+               # 每一個觀察值皆取出該vector的names
+               pos = map(token, names), 
+               date = lubridate::ymd(date)) %>% 
+        select(id, date, token, pos) %>% 
+        # 現在有兩個list columns
+        unnest(cols = c(token, pos)))
+
+(jieba_plot <- nao_tag %>% 
+        # 選取詞性為動詞、形容詞、名詞的資料
+        filter(pos %in% c("v", "a", "n")) %>% 
+        count(pos, token) %>% 
+        # 選出三種詞性的前10常用詞
+        group_by(pos) %>% 
+        top_n(10, wt = n) %>% 
+        ungroup() %>% 
+        # 畫成圖表示
+        ggplot(aes(x = reorder(token, n), y = n, fill = pos)) + 
+        geom_col(show.legend = FALSE) +
+        facet_wrap(~ pos, scales = "free") +
+        coord_flip() + 
+        labs(x = "token", title = "審計部常用詞：jieba"))
+```
+
+除了用jiebaR可以進行詞性標記外，也可以使用前面介紹的`udpipe`來做詞性標記，但我們一樣要先下載要分析語言的資料，才能夠進行後續的標記任務。但中文的效果不太好！
+
+```{r nao_udpipe_tag}
+# 拿前面udpipe的model來試試（預設會下載在工作目錄）
+ch_model_data <- udpipe::udpipe_download_model(language = "chinese-gsd")
+
+# 看下載的資料裡有什麼
+names(ch_model_data) # 裡面有說明「語言」、「下載的檔案」、「下載檔案的網頁位置」
+
+# 取出使用資料的
+ch_model <- udpipe::udpipe_load_model(file = ch_model_data$file_model)
+
+# 如果已經下載過語言資料，可以直接執行讀取資料就好
+# ch_model <- udpipe::udpipe_load_model(file = "chinese-gsd-ud-2.5-191206.udpipe")
+
+# ?udpipe_annotate
+# 實際將資料進行標記
+nao_result <- udpipe_annotate(object = ch_model, 
+                              x = nao$fulltext, 
+                              trace = TRUE) %>% 
+        as_tibble()
+
+# 與之前畫圖的語法一樣
+(udpipe_plot <- nao_result %>% 
+        # 不同的套件對於詞性註記的代碼不同，請注意！
+        filter(upos %in% c("VERB", "ADJ", "NOUN")) %>% 
+        count(upos, token) %>% 
+        group_by(upos) %>% 
+        top_n(10, wt = n) %>% 
+        ungroup() %>% 
+        ggplot(aes(x = reorder(token, n), y = n, fill = upos)) + 
+        geom_col(show.legend = FALSE) +
+        facet_wrap(~ upos, scales = "free") +
+        coord_flip() + 
+        labs(x = "token", title = "審計部常用詞：udpipe"))
+```
+
+我們分別使用了jiebaR與udpipe兩個不同套件的訓練資料來分析審計部的新聞發布資料，現在可以把兩張圖畫在一起，看看兩者的差異。
+
+```{r nao_combine_plot}
+library(patchwork) # install.packages("patchwork")
+jieba_plot + udpipe_plot + patchwork::plot_layout(ncol = 1)
+```
+
+## 練習二
+
+一樣執行前面用jiebaR與udpipe斷詞與詞性標註，但這次把udpipe斷詞後結果為單字的情況去掉，再畫一次圖，看看結果有什麼改變？
+
+```{r practice_2, eval=FALSE}
+(jieba_plot <- nao_tag %>% 
+        # 選取詞性為動詞、形容詞、名詞的資料
+        filter(pos %in% c("v", "a", "n"), 
+               str_length(token) >= 2) %>% # 篩選單個字的
+        count(pos, token) %>% 
+        # 選出三種詞性的前10常用詞
+        group_by(pos) %>% 
+        top_n(10, wt = n) %>% 
+        ungroup() %>% 
+        # 畫成圖表示
+        ggplot(aes(x = reorder(token, n), y = n, fill = pos)) + 
+        geom_col(show.legend = FALSE) +
+        facet_wrap(~ pos, scales = "free") +
+        coord_flip() + 
+        labs(x = "token", title = "審計部常用詞：jieba"))
+
+(udpipe_plot <- nao_result %>% 
+        # 不同的套件對於詞性註記的代碼不同，請注意！
+        filter(upos %in% c("VERB", "ADJ", "NOUN"), 
+               str_length(token) >= 2) %>% 
+        count(upos, token) %>% 
+        group_by(upos) %>% 
+        top_n(10, wt = n) %>% 
+        ungroup() %>% 
+        ggplot(aes(x = reorder(token, n), y = n, fill = upos)) + 
+        geom_col(show.legend = FALSE) +
+        facet_wrap(~ upos, scales = "free") +
+        coord_flip() + 
+        labs(x = "token", title = "審計部常用詞：udpipe"))
+
+jieba_plot + udpipe_plot + patchwork::plot_layout(ncol = 1)
+```
+
+## 其他參考資料
+
+- 中研院資訊科學研究所馬偉雲助研究員對於 [NLP](http://research.sinica.edu.tw/nlp-natural-language-processing-chinese-knowledge-information/)的介紹。

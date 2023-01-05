@@ -1,0 +1,4 @@
+"0","# 作業會有!!!"
+"0","# 分詞使用tidytext::unnest_token，但分詞後還是維持data frame的格式"
+"0","(token_df <- new_trump_df %>% "
+"0","    tidytext::unnest_tokens(input = text, output = word))"

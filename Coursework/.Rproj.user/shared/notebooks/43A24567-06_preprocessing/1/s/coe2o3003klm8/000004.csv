@@ -1,0 +1,5 @@
+"0",""
+"0","# 如果要移除停用字，就要用anti_join的方式處理"
+"0","stopword <- tibble(word = stopwords())"
+"0",""
+"0","token_df %>% anti_join(stopword, by = ""word"")"

@@ -1,0 +1,344 @@
+---
+title: "topic modeling"
+author: "Mao Wang"
+date: "2021/12/21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r package, message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(jiebaR) # 中文斷詞
+library(tmcn) # install.packages("tmcn") # 簡體轉繁體
+library(tictoc) # install.packages("tictoc")
+
+# 模型會用到的套件
+library(topicmodels) # install.packages("topicmodels") # 主題模型
+library(ldatuning) # install.packages("ldatuning") # 協助判斷主題數
+library(stm) # install.packages("stm") # 結構式主題模型
+library(LDAvis) # install.packages("LDAvis") 
+
+# 使用Mac才需要執行（中文字體設定）
+# my_theme <- theme_bw() + 
+  # theme(text = element_text(family = "STHeitiTC-Light"))
+# theme_set(my_theme)
+```
+
+## 1. 什麼是主題模型（topic modeling）
+
+主題模型最早是由Blei、Ng與Jordan(2003)三位學者所提出，主題模型是假設主題與文件中的字詞（token）的出現服膺**潛在狄利克雷分布（latent Dirichlet allocation, LDA）**，所以在某一主題下，所有字詞出現的機率加總為1。更具體得來講，這個演算法會將文件中的字詞分派（assign）到某一主題，再透過不斷迭代（iterative）的運算方式，調整文件中每個字詞分配到某主題的機率。
+
+主題模型是植基詞袋模型的假設下來做分群（clustering），當然分群的方法不只主題模型，如K-平均（K-means）分群法也能作到分群，但K-平均只能將文件（document）分到單一主題。而主題模型的優勢就在於，其假設一份文件可能有多個主題，故在計算該文件之主題時，是以多個主題的機率（multinomial）去計算。
+
+![主題模型示意圖](https://t1.daumcdn.net/cfile/tistory/99F515345AFC51A015)
+
+接下來我們試試用審計部的新聞發布資料，看都提及些什麼主題。但首先我們要先將資料整理成文件-字詞矩陣（document-term matrix, DTM）
+
+```{r nao_dtm}
+# 讀入資料
+load("data/nao.RData")
+glimpse(data_all)
+
+# 分詞引擎 # 如果要做好分析，請記得把斷詞引擎建好，有需要建入使用者自訂辭典的詞，請務必記得加入。
+seg_engine <- worker(bylines = TRUE)
+# new_user_word(worker = seg_engine, words = c("新加的詞1", "新加的詞2"))
+
+# 停用詞辭典
+zh_stopword <- stopwords::stopwords(language = "zh", source = "misc") %>%
+  # 整理成tibble的格式
+  tibble(word = .) %>% 
+  # 將簡體轉成繁體
+  mutate(word = tmcn::toTrad(word)) %>%
+  # 加上一些自訂的停用詞
+  bind_rows(tibble(word = c("年", "月", "日", "民國", "與", "於", "並", "為", "項", "室", "審計部")))
+
+# 中文斷詞
+nao_token <- data_all %>% 
+  # 產生一個新的欄位叫id
+  mutate(id = row_number()) %>% 
+  mutate(token = jiebaR::segment(fulltext, seg_engine)) %>% 
+  unnest(token)
+
+# 建立dtm
+nao_dtm <- nao_token %>% 
+  anti_join(zh_stopword, by = c("token" = "word")) %>% 
+  # 因為有了文件id，把title欄位刪除
+  select(id, token) %>% 
+  # 把有數字的token都刪除
+  filter(!str_detect(token, pattern = "\\d"), 
+         # 若只有一個字的token就刪除
+         str_length(token) >= 2) %>% 
+  # 計算每個文件各token出現的次數（三個欄位：文件、詞彙、次數）
+  count(id, token) %>% 
+  # 轉換成dtm
+  tidytext::cast_dtm(document = id, term = token, value = n)
+
+# 為什麼會有14個字元長的詞彙，檢查一下！
+nao_token %>% 
+  mutate(chr_num = str_length(token)) %>% 
+  filter(chr_num >= 5) %>% 
+  pull(token)
+
+# 清理一下資料，把英文token也移除。
+nao_dtm <- nao_token %>% 
+  anti_join(zh_stopword, by = c("token" = "word")) %>% 
+  filter(!str_detect(token, pattern = "\\d"), 
+         # 若只有一個字的token就刪除
+         str_length(token) >= 2,
+         # 把有英文的token都刪除（但如果英文對你的研究重要，請不要刪除。）
+         !str_detect(token, pattern = "[a-zA-Z]")) %>% 
+  select(id, token) %>% 
+  count(id, token) %>% 
+  tidytext::cast_dtm(document = id, term = token, value = n)
+
+nao_dtm
+```
+
+完成了前置作業，接下來就是把`nao_dtm`放入跑主題模型的函式內。
+
+## 2. LDA
+
+統計模型處理是`R`的強項，所以跑模型時，其實比一般清理資料要簡單很多，只需要把基本的參數設定好，結果就出來了！但參數設定牽涉到對於模型的理解，反而需要有比較穩固的統計基礎才能夠真的得心應手。
+
+```{r nao_lda}
+# 將nao_dtm放入LDA函式。
+nao_lda <- topicmodels::LDA(nao_dtm, 
+                            # 主題數
+                            k = 6, 
+                            # 估測方法，Gibbs速度會比較快一點。
+                            method = "Gibbs", 
+                            # 為了要讓結果可以重現，另外設定seed。
+                            control = list(seed = 5691))
+
+# 將lda的token結果轉回data frame的格式
+(nao_topics_token <- tidytext::tidy(nao_lda, matrix = "beta")) # 可以看到每個term都有相對應在各主題的beta值。
+# ?tidytext::lda_tidiers
+
+# 驗證一下剛剛說的，每個主題的字詞機率加總為1
+nao_topics_token %>% 
+  # 以主題分群
+  group_by(topic) %>% 
+  # 各群機率加總
+  summarize(prob = sum(beta))
+```
+
+主題模型的結果很容易就跑出來，但是要注意，模型結果只是幫我們分群，實際上**研究者必須依照分群內的字詞自行為各主題命名**。接著我們試著用圖像的方式呈現這些數據。
+
+```{r lda_token_vis}
+# 將每個主題機率最高的20個字列出
+(nao_plot <- nao_topics_token %>%
+  group_by(topic) %>%
+  top_n(15, wt = beta) %>% 
+  ungroup() %>% 
+  arrange(topic, -beta) %>% 
+  mutate(order = row_number())
+)
+
+# 畫圖將主題資料呈現出來
+(p_token <- ggplot(nao_plot, 
+                   aes(reorder_within(term, by = beta, within = topic), 
+                     y = beta, 
+                     fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  scale_x_reordered() + 
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  labs(x = "token", y = "beta", title = "審計部新聞發布主題模型分析", 
+       subtitle = "(2013-2019)")
+)
+```
+
+除了看各主題裡面有哪些字詞外，也可以看看談論各主題的文件呈現怎麼樣的分配。
+
+```{r lda_doc_vis}
+# 將lda的document結果轉回data frame的格式
+(nao_topics_doc <- tidytext::tidy(nao_lda, matrix = "gamma"))
+# topicmodels::posterior(object = nao_lda) %>% .$topics
+
+# 驗證一下剛剛說的，每個文件的主題機率加總為1
+nao_topics_doc %>% 
+  # 因為document欄位現在是文字型，排序會跟數值型不同。
+  # mutate(document = as.numeric(document)) %>% 
+  # 以文件分群
+  group_by(document) %>% 
+  # 每一文件之主題機率加總為1
+  summarize(prob = sum(gamma))
+
+# 將data frame排序來看，第一百份文件的情況
+nao_topics_doc %>% 
+  arrange(document) %>% 
+  filter(document == 100)
+
+# 畫出各主題的文件分布情況
+(p_doc <- ggplot(nao_topics_doc, aes(x = gamma)) + 
+  geom_histogram(aes(fill = factor(topic)), show.legend = FALSE) + 
+  # 平滑版的geom_histogram
+  geom_density(alpha = 0.4, show.legend = FALSE) +
+  scale_y_sqrt() +
+  facet_wrap(~ topic, scales = "free_y")
+)
+
+library(patchwork) # install.packages("patchwork)
+p_token + p_doc
+```
+
+從上面兩個圖可以得知，除了各主題實際上談論的內容外，也可以看出各文件（審計部新聞發布）在各主題的分布情況。以主題五為例，呈現比較兩極的結果，代表談論主題五的文件，有很大比重是只談主題五；而談論其他主題的文件，則很少為單一主題。
+
+## 2.1 如何決定主題數？
+
+因為主題模型是屬於**非監督式**的機器學習（unsupervised machine learning）的一種方法，所以不像監督式機器學習有確切的依變數可供我們驗證，因此無法用像混淆矩陣（confusion matrix）的方式來計算正確性。但還是有其他輔助的指標可供我們參考，以下將主要介紹複雜度（perplexity，或稱不確定度）指標，來協助我們決定主題數。
+
+```{r manual_tuning}
+# 取出log-likelihood
+topicmodels::logLik(nao_lda)
+
+# 取出複雜度（perplexity）：當複雜度越低，代表每個主題間區隔得越清楚，也是我們最希望得到的結果。
+topicmodels::perplexity(object = nao_lda, newdata = nao_dtm)
+
+# 將主題數2:20放入函式中去跑，當然也可以用for loop的方式寫
+nao_lda_list <- map(.x = 2:20, ~topicmodels::LDA(nao_dtm, 
+                            # 主題數
+                            k = .x, 
+                            # 估測方法
+                            method = "Gibbs", 
+                            # 為了要讓結果可以重現，另外設定seed。
+                            control = list(seed = 5691)))
+
+# 將上述的資訊整理在tibble中
+k_data <- tibble(
+  k = 2:(length(nao_lda_list) + 1), 
+  loglik = map_dbl(nao_lda_list, topicmodels::logLik), 
+  perplexity = map_dbl(nao_lda_list, 
+                       topicmodels::perplexity, newdata = nao_dtm))
+
+# 畫出複雜度曲線，選擇適合的主題數
+perplexity_plot <- ggplot(k_data, aes(x = k, y = perplexity)) +
+  geom_line() +
+  geom_point() + 
+  labs(x= "主題數", title = "Perplexity曲線圖")
+
+# 畫出loglik曲線，選擇適合的主題數
+loglik_plot <- ggplot(k_data, aes(x = k, y = loglik)) +
+  geom_line() +
+  geom_point() + 
+  labs(x= "主題數", title = "loglik曲線圖")
+
+perplexity_plot + loglik_plot + plot_layout(ncol = 1)
+```
+
+上面的結果看起來應該是6-7是一個比較合理的主題數。但除了這種算法外，也有研究者開發出其他指標，並且我們可以直接使用套件來計算。
+
+```{r ldatuning}
+# 決定主題數
+tic()
+result <- ldatuning::FindTopicsNumber(
+  nao_dtm,
+  topics = seq(from = 2, to = 20, by = 1),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 5691),
+  mc.cores = 2L, # 用雙CPU運算
+  verbose = TRUE)
+toc()
+beepr::beep(2)
+
+result
+# 畫圖看大概幾個主題比較適合
+ldatuning::FindTopicsNumber_plot(result)
+```
+
+`ldatuning`套件跑出來的結果，也與先前計算的結果類似（請注意：不是有交錯就是最適合的主題數）。**但目前對於主題數的評估還沒有定論**，也有學者認為，跑出來的主題也必須要可以被人解釋，否則跑出來即便是好的數據指標也沒有參考價值。
+
+## 3. stm
+
+除了LDA的主題模型，其實也有學者發展出不同的主題模型，我們接著要介紹的主題模型叫做結構式主題模型（structural topic model）。與前面的LDA差異僅在於加入了文件的後設資料（metadata），如作者、文件發布日等，可以使主題模型更準確。
+
+```{r trump_stm, warning=FALSE}
+# 讀入資料
+trump <- readr::read_csv("data/trump_twitter_archive.csv") %>% 
+  mutate(text = str_conv(text, encoding = "UTF-8")) %>% 
+  mutate(month = lubridate::mdy_hms(created_at) %>% 
+           lubridate::month()) %>% 
+  # 把無法正確分析的日期，用下一筆觀察值補上
+  fill(month, .direction = "up")
+
+# trump %>% filter(is.na(month))
+glimpse(trump)
+
+# 資料清理
+processed <- textProcessor(documents = trump$text, 
+                           metadata = trump)
+names(processed)
+# 可以檢視各式什麼內容
+map(processed, head)
+
+# 轉換成stm分析的格式（注意：會自動再清理資料一次！）
+out <- prepDocuments(documents = processed$documents, 
+                     vocab = processed$vocab, 
+                     meta = processed$meta)
+# out是經過stm套件轉換過的內容，之後要使用請都使用out內的資料才不會出錯
+names(out)
+
+# 這邊做或不做沒關係，只是為了讓後面的code看起來簡單點
+docs <- out$documents
+vocab <- out$vocab
+meta <- out$meta
+
+# 建立stm模型
+trump_stm <- stm(documents = docs, vocab = vocab,
+              K = 10, data = meta, 
+              # prevalence就是拿來當成是covariate的欄位資料，請用formula的方式寫
+              prevalence = ~ month, 
+              # 預設是500次迭代計算，課堂演示只用100次試試
+              max.em.its = 100, seed = 5691,
+              init.type = "Spectral")
+```
+
+stm是一個很完整的主題模型分析套件，幾乎所有的主題模型該做的任務，都可以在這個套件內完成，但缺點是這個套件對於中文資料的支援比較差，建議大家若要使用這個套件，請先以英文資料優先。接著來看看分析出來有哪些主題，還有哪些內容。
+
+```{r}
+# 畫出最高比重的主題
+plot(trump_stm)
+
+# 查看主題內的字詞
+labelTopics(model = trump_stm, topics = c(7, 6, 3))
+
+# 保險的方式還是看看原文寫了什麼，找出主題六、七，各取兩篇document來看
+findThoughts(model = trump_stm, 
+             texts = meta$text, 
+             n = 2, topics = 7:6)
+```
+
+## 3.1 如何決定主題數？
+
+因為stm也是主題模型，所以還是**必須由研究者選擇 K（主題數）**，而`stm::searchK`可以幫助我們判斷多少主題才是比較適合了。
+
+```{r stm_searchK}
+tictoc::tic()
+findingk <- stm::searchK(documents = out$documents, 
+                         vocab = out$vocab, 
+                         K = c(5, 7, 9, 10, 12, 15),  
+                         data = meta, 
+                         prevalence = ~ month,
+                         max.em.its = 50, 
+                         verbose = TRUE)
+tictoc::toc() # 在我的電腦約需2分鐘
+plot(findingk)
+# held-out高、residual低、semantic coherence高
+```
+
+從結果來看，15個主題可能是目前最適合的，但因為我們只試做到15個主題，實際上在測試需要多少主題時，會以10, 20, 30, 40或更多先去找可能的區間。因為stm與做這樣的模擬需要較多的運算資源，所以當文字資料量大時，會需要花很多時間才能跑出結果。
+
+對於實際操作尚有不理解的同學，可以看`tidytext`這個套件的作者之一Julia Silge的操作影片。 [Topic modeling with R and tidy data principles](https://www.youtube.com/watch?v=evTuL-RcRpc)
+
+## bonus (LDAvis)
+
+如果對於主題模型視覺化有興趣的同學，可以參考另一個套件叫`LDAvis`，語法可參考這個 [連結](https://ldavis.cpsievert.me/reviews/reviews.html)，實際成品可參考這個 [連結](https://ldavis.cpsievert.me/reviews/vis/#topic=7&lambda=0.6&term=)
+
+### 其他補充
+
+因為主題模型是一個尚在發展的方法，換句話說，也還有許多改善的空間，目前除了常見的unsupervised的方法外，最近也發展出semisupervised的方法，如`keyATM`[連結](https://keyatm.github.io/keyATM/)。另外，也有更多學者開始重視主題模型的驗證（validation）議題，可以使用`oolong`[連結](https://cran.r-project.org/web/packages/oolong/index.html)，有興趣的同學開始自行參閱。

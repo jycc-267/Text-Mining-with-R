@@ -1,0 +1,8 @@
+"0","library(pdftools)"
+"0",""
+"0","text_vec <- pdftools::pdf_text(""data/udn_text.pdf"")"
+"0",""
+"0","udn_text <- tibble(id = seq(1, length(text_vec)),"
+"0","        text = text_vec) %>% "
+"0","        filter(str_detect(text, ""公務員"")) %>% "
+"0","        mutate(text = str_squish(text))"

@@ -1,0 +1,7 @@
+"0","corpus %>% "
+"0","  count(words) %>% "
+"0","  top_n(n = 10, wt = n) %>% "
+"0","  ggplot(aes(x = reorder(words, n), y = n)) + "
+"0","  geom_col() + "
+"0","  coord_flip() + "
+"0","  theme_light() # +"
